@@ -1,4 +1,7 @@
-const fastify = require('fastify')({ logger: true });
+const fastify = require('fastify')({ 
+    logger: true,
+    trustProxy: true 
+});
 const mongoose = require('mongoose');
 
 const MONGO_URI = process.env.MONGO_URI;
@@ -221,16 +224,82 @@ fastify.post('/admin/create-key', async (r, rp) => {
     return { success: true };
 });
 
+fastify.get('/redeem', async (request, reply) => {
+    const html = `
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Asfixy - Redeem Key</title>
+        <style>
+            :root { --bg: #0a0a0a; --card: #141414; --accent: #ff3333; --text: #e0e0e0; }
+            body { background: var(--bg); color: var(--text); font-family: 'Inter', sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }
+            .container { width: 90%; max-width: 400px; background: var(--card); border: 1px solid rgba(255,51,51,0.1); border-radius: 24px; padding: 40px; box-shadow: 0 20px 50px rgba(0,0,0,0.8); text-align: center; }
+            h1 { font-size: 1.2rem; letter-spacing: 3px; color: var(--accent); text-transform: uppercase; margin-bottom: 20px; }
+            input { width: 100%; padding: 12px; background: #0a0a0a; border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; color: #fff; margin-bottom: 20px; box-sizing: border-box; text-align: center; }
+            button { width: 100%; background: var(--accent); color: #fff; border: none; padding: 12px; border-radius: 12px; font-weight: bold; cursor: pointer; transition: 0.3s; }
+            button:hover { transform: scale(1.02); opacity: 0.9; }
+            #status { margin-top: 20px; font-size: 0.8rem; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>Activation</h1>
+            <p style="font-size: 0.8rem; opacity: 0.5;">Enter your key to lock it to this device.</p>
+            <input type="text" id="keyInput" placeholder="Asfixy-XXXXXX">
+            <button onclick="redeem()">ACTIVATE DEVICE</button>
+            <div id="status"></div>
+        </div>
+        <script>
+            async function redeem() {
+                const key = document.getElementById('keyInput').value;
+                const status = document.getElementById('status');
+                status.innerText = "Processing...";
+                
+                try {
+                    const res = await fetch('/redeem-key', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ key })
+                    });
+                    const data = await res.json();
+                    if (data.valid) {
+                        status.style.color = "#33ff77";
+                        status.innerText = "SUCCESS: " + (data.msg || "Device Authorized");
+                    } else {
+                        status.style.color = "#ff3333";
+                        status.innerText = "ERROR: " + (data.reason || "Invalid Key");
+                    }
+                } catch (e) { status.innerText = "Connection Error"; }
+            }
+        </script>
+    </body>
+    </html>`;
+    reply.type('text/html').send(html);
+});
+
 // --- PUBLIC ROUTES (NO KEY REQUIRED FOR REDEEM) ---
-fastify.post('/redeem-key', async (request) => {
+fastify.post('/redeem-key', async (request, reply) => {
     const { key } = request.body;
+    const userIp = request.ip; // Captura o IP real devido ao trustProxy
+
+    if (!key) return reply.code(400).send({ valid: false, reason: "Key is required" });
+
     const keyDoc = await KeyModel.findOne({ key });
-    if (!keyDoc) return { valid: false, reason: "Invalid" };
+    if (!keyDoc) return { valid: false, reason: "Key not found in database" };
+
+    // Se for MANUAL, vincula ao IP de quem está acessando agora
     if (keyDoc.ip === "MANUAL") {
-        await KeyModel.updateOne({ key }, { ip: request.ip });
-        return { valid: true, msg: "Linked to device" };
+        await KeyModel.updateOne({ key }, { ip: userIp });
+        return { valid: true, msg: `Key locked to IP: ${userIp}` };
     }
-    return { valid: keyDoc.ip === request.ip, reason: keyDoc.ip === request.ip ? "OK" : "Device mismatch" };
+
+    // Se já estiver vinculada, checa se o IP bate
+    if (keyDoc.ip === userIp) {
+        return { valid: true, msg: "Device already authorized" };
+    } else {
+        return { valid: false, reason: "This key is already locked to another device/IP" };
+    }
 });
 
 fastify.get('/get-key', async (request) => {
