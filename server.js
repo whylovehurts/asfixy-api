@@ -1,14 +1,14 @@
-const fastify = require('fastify')({ 
+const fastify = require('fastify')({
     logger: true,
-    trustProxy: true 
+    trustProxy: true
 });
 const mongoose = require('mongoose');
 const crypto = require('crypto');
 
 const SIGN_SECRET = process.env.SIGN_SECRET;
 const MONGO_URI = process.env.MONGO_URI;
-const MASTER_KEY = process.env.DEV_KEY; 
-const DURACAO_KEY = 12 * 60 * 60 * 1000; 
+const MASTER_KEY = process.env.DEV_KEY;
+const DURACAO_KEY = 12 * 60 * 60 * 1000;
 
 // Helper para o Node.js renderizar o tempo inicial no servidor
 function formatTimeServer(ms) {
@@ -27,6 +27,19 @@ function escapeHtml(str = "") {
         .replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;")
         .replace(/'/g, "&#039;");
+}
+
+// Helper para escapar strings em atributos JS (onclick, etc)
+function escapeJs(str = "") {
+    return str.replace(/[\\'"<>&]/g, c => ({
+        '\\': '\\\\', "'": "\\'", '"': '\\"',
+        '<': '\\x3c', '>': '\\x3e', '&': '\\x26'
+    }[c]));
+}
+
+// Helper para IP consistente
+function getClientIp(request) {
+    return request.headers['x-forwarded-for']?.split(',')[0]?.trim() || request.ip;
 }
 
 function verifySignature(req) {
@@ -48,11 +61,25 @@ function verifySignature(req) {
     return expected === sign;
 }
 
-mongoose.connect(MONGO_URI).then(() => console.log("💉 Abyss Connection Active"));
+mongoose.connect(MONGO_URI).then(async () => {
+    console.log("💉 Abyss Connection Active");
+
+    // Remove index antigo de IP unico (se existir)
+    // Isso permite multiplas keys com ip: "MANUAL"
+    try {
+        await mongoose.connection.db.collection('keys').dropIndex('ip_1');
+        console.log("🗑️ Dropped old ip_1 unique index");
+    } catch (e) {
+        // Index nao existe, ok
+        if (e.codeName !== 'IndexNotFound') {
+            console.log("Index ip_1 not found or already dropped");
+        }
+    }
+});
 
 // --- SCHEMAS ---
 const KeySchema = new mongoose.Schema({
-    ip: { type: String, default: "MANUAL" }, 
+    ip: { type: String, default: "MANUAL" },
     key: { type: String, required: true, unique: true },
     isPermanent: { type: Boolean, default: false },
     createdAt: { type: Date, default: Date.now }
@@ -72,6 +99,7 @@ const FarmSchema = new mongoose.Schema({
     webhookUsed: String,
     lastUpdate: { type: Date, default: Date.now }
 });
+FarmSchema.index({ ownerKey: 1 }); // index para consultas por ownerKey
 const FarmModel = mongoose.model('Farm', FarmSchema);
 
 const BanSchema = new mongoose.Schema({
@@ -95,6 +123,7 @@ const LogSchema = new mongoose.Schema({
 const LogModel = mongoose.model('Log', LogSchema);
 
 fastify.register(require('@fastify/cors'), { origin: true });
+fastify.register(require('@fastify/cookie'));
 fastify.register(require('@fastify/rate-limit'), {
     global: true,
     max: 100,
@@ -118,8 +147,56 @@ function rateLimit(ip, limit, ms) {
     return true;
 }
 
+function sendError(reply, request, code, msg, desc, btnText = "GET NEW KEY", btnHref = "/get-key") {
+    if (request.method !== 'GET' || request.headers.accept?.includes('application/json')) {
+        return reply.code(code).send({ error: msg });
+    }
+    const html = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Asfixy - Error</title>
+<style>
+:root { --bg:#050505; --card:rgba(20,20,20,0.7); --accent:#ff3333; --text:#eaeaea; }
+*{margin:0;padding:0;box-sizing:border-box;font-family:'Inter',sans-serif;}
+body{ background:radial-gradient(circle at top,#0a0a0a,#050505); color:var(--text); height:100vh; display:flex; justify-content:center; align-items:center; flex-direction:column; text-align:center;}
+canvas { position:fixed; inset:0; z-index:-1; }
+.card { background:var(--card); padding:40px; border-radius:20px; border:1px solid rgba(255,51,51,0.2); backdrop-filter:blur(20px); max-width:400px; width:90%; animation:shake 0.5s; }
+@keyframes shake { 0%,100%{transform:translateX(0);} 25%{transform:translateX(-10px);} 75%{transform:translateX(10px);} }
+h1 { color:var(--accent); letter-spacing:3px; margin-bottom:15px; font-size:1.5rem; text-transform:uppercase; }
+p { opacity:0.7; font-size:0.9rem; margin-bottom:25px; line-height:1.5; }
+.btn { display:inline-block; padding:12px 25px; background:var(--accent); color:#fff; text-decoration:none; border-radius:12px; font-weight:bold; transition:0.3s; border:none; cursor:pointer; }
+.btn:hover { transform:scale(1.05); box-shadow:0 0 20px rgba(255,51,51,0.4); }
+</style>
+</head>
+<body>
+<canvas id="bg"></canvas>
+<div class="card">
+    <h1>${msg}</h1>
+    <p>${desc}</p>
+    <a href="${btnHref}" class="btn">${btnText}</a>
+</div>
+<script>
+const c=document.getElementById('bg');const ctx=c.getContext('2d');c.width=innerWidth;c.height=innerHeight;
+let p=[];for(let i=0;i<50;i++)p.push({x:Math.random()*c.width,y:Math.random()*c.height,v:Math.random()*0.5});
+function draw(){ctx.clearRect(0,0,c.width,c.height);ctx.fillStyle='rgba(255,51,51,0.2)';
+p.forEach(e=>{e.y+=e.v;if(e.y>c.height)e.y=0;ctx.fillRect(e.x,e.y,2,2);});requestAnimationFrame(draw);}draw();
+</script>
+</body>
+</html>`;
+    return reply.code(code).type('text/html').send(html);
+}
+
+// --- 404 HANDLER ---
+fastify.setNotFoundHandler((request, reply) => {
+    return sendError(reply, request, 404, "404 Not Found", "The page or endpoint you are looking for does not exist.", "HOME", "/");
+});
+
 // --- IP LOCK RIGOROSO (Middleware) ---
 fastify.addHook('preHandler', async (request, reply) => {
+    if (request.is404) return;
     try {
         const path = (request.routerPath || request.url || "").toLowerCase();
         const publicPaths = [
@@ -127,29 +204,31 @@ fastify.addHook('preHandler', async (request, reply) => {
             '/redeem',
             '/redeem-key',
             '/admin',
-            '/download',
-            '/script/',
-            '/engine' // <-- adiciona isso
+            '/script/'
         ];
+        if (request.method === 'OPTIONS') return;
         if (path === '/' || publicPaths.some(p => path.startsWith(p))) return;
 
-        const userKey = request.query?.key || request.headers['x-asfixy-key'];
-        if (!userKey) return reply.code(401).send({ error: "Missing Key" });
+        const userKey = request.query?.key || request.headers['x-asfixy-key'] || request.cookies?.asfixy_key;
+        if (!userKey) return sendError(reply, request, 401, "Missing Key", "You need an active key to access this page.");
 
         if (userKey === MASTER_KEY) return;
 
-        if (!verifySignature(request))
-            return reply.code(401).send({ error: "Invalid signature" });
+        // Signature removed for now, as new-asfixy.js does not generate it.
+        // if (!verifySignature(request))
+        //    return sendError(reply, request, 401, "Invalid signature", "Request signature verification failed.");
 
-        const keyDoc = await KeyModel.findOne({ key: userKey }).lean();
-        if (!keyDoc) return reply.code(401).send({ error: "Invalid Key" });
+        const keyDoc = await KeyModel.findOne({ key: userKey.toLowerCase() })
+            .collation({ locale: 'en', strength: 2 })
+            .lean();
+        if (!keyDoc) return sendError(reply, request, 401, "Invalid Key", "Your key is invalid or has expired.");
 
         if (keyDoc.ip === "MANUAL" && !keyDoc.isPermanent) {
-            return reply.code(403).send({ error: "Redeem key first" });
+            return sendError(reply, request, 403, "Redeem key first", "Please redeem your key to lock it to this device.");
         }
 
         if (keyDoc.ip !== request.ip)
-            return reply.code(401).send({ error: "IP mismatch" });
+            return sendError(reply, request, 401, "IP Mismatch", "This key is registered to another device.");
 
         const banned = await BanModel.findOne({
             $or: [
@@ -159,10 +238,10 @@ fastify.addHook('preHandler', async (request, reply) => {
         }).lean();
 
         if (banned)
-            return reply.code(403).send({ error: "Banned" });
+            return sendError(reply, request, 403, "Banned", "Your access has been permanently revoked.");
 
     } catch {
-        return reply.code(500).send({ error: "Auth failure" });
+        return sendError(reply, request, 500, "Auth Failure", "Internal authentication error occurred.");
     }
 });
 
@@ -175,7 +254,7 @@ fastify.addHook('onResponse', async (req, reply) => {
             method: req.method,
             status: reply.statusCode
         });
-    } catch {}
+    } catch { }
 });
 
 // --- ADMIN PANEL (PAGINATION & UI) ---
@@ -235,9 +314,9 @@ fastify.get('/admin', async (request, reply) => {
                         </td>
                         <td class="timer" data-ms="${item.timeLeft}">${item.isPermanent ? '<span style="color:var(--success)">PERMANENT</span>' : formatTimeServer(item.timeLeft)}</td>
                         <td class="actions">
-                            <button class="btn-opt" style="color:var(--success)" onclick="resetIP('${item.key.replace(/'/g, "\\'")}')">RESET IP</button>
-                            <button class="btn-opt" onclick="updateKey('${item.key}')">EDIT</button>
-                            <button class="btn-opt" onclick="revogarKey('${item.key}')" style="color:var(--accent)">REVOKE</button>
+                            <button class="btn-opt" style="color:var(--success)" onclick="resetIP('${escapeJs(item.key)}')">RESET IP</button>
+                            <button class="btn-opt" onclick="updateKey('${escapeJs(item.key)}')">EDIT</button>
+                            <button class="btn-opt" onclick="revogarKey('${escapeJs(item.key)}')" style="color:var(--accent)">REVOKE</button>
                         </td>
                     </tr>`).join('')}
                 </tbody>
@@ -340,7 +419,9 @@ fastify.post('/admin/bulk-create', async (r, rp) => {
 
 fastify.post('/admin/reset-ip', async (r, rp) => {
     if (r.query.key !== MASTER_KEY) return rp.code(403).send();
-    await KeyModel.updateOne({ key: r.body.targetKey }, { ip: "MANUAL" });
+    const targetKey = String(r.body.targetKey || "").toLowerCase();
+    await KeyModel.updateOne({ key: targetKey }, { ip: "MANUAL" })
+        .collation({ locale: 'en', strength: 2 });
     return { success: true };
 });
 
@@ -354,21 +435,24 @@ fastify.post('/admin/edit-full', async (r, rp) => {
     const update = {};
 
     if (newName && newName.length <= 50)
-        update.key = newName;
+        update.key = newName.toLowerCase(); // sempre lowercase
 
     const h = parseInt(hours);
     if (!isNaN(h) && h > 0) {
         update.createdAt = new Date(Date.now() - (DURACAO_KEY - (h * 3600000)));
     }
 
-    await KeyModel.updateOne({ key: targetKey }, update);
+    await KeyModel.updateOne({ key: targetKey.toLowerCase() }, update)
+        .collation({ locale: 'en', strength: 2 });
 
     return { success: true };
 });
 
 fastify.post('/admin/revoke-key', async (r, rp) => {
     if (r.query.key !== MASTER_KEY) return rp.code(403).send();
-    await KeyModel.deleteOne({ key: r.body.targetKey });
+    const targetKey = String(r.body.targetKey || "").toLowerCase();
+    await KeyModel.deleteOne({ key: targetKey })
+        .collation({ locale: 'en', strength: 2 });
     return { success: true };
 });
 
@@ -381,7 +465,7 @@ fastify.post('/admin/create-key', async (r, rp) => {
 
     await KeyModel.create({
         ip: "MANUAL",
-        key: name,
+        key: name.toLowerCase(), // sempre lowercase para consistencia
         isPermanent: !!r.body.permanent
     });
 
@@ -447,69 +531,66 @@ fastify.get('/redeem', async (request, reply) => {
     reply.type('text/html').send(html);
 });
 
-// --- PUBLIC ROUTES (NO KEY REQUIRED FOR REDEEM) ---
-fastify.post('/redeem-key', async (request, reply) => {
+fastify.get('/get-key', async (request, reply) => {
+    const userIp = getClientIp(request);
+
     try {
-        const key = String(request.body?.key || "").trim().toLowerCase();
-
-        if (!rateLimit(userIp, 5, 60000)) {
-            return reply.code(429).send({
-                valid: false,
-                reason: "Too many requests"
-            });
-        }
-
-        const userIp =
-            request.headers['x-forwarded-for']?.split(',')[0] || request.ip;
-
-        if (!key)
-            return reply.code(400).send({ valid: false, reason: "Key required" });
-
-        // rate limit manual forte (anti spam real)
-        const now = Date.now();
-        global.REDEEM_LIMIT = global.REDEEM_LIMIT || {};
-
-        const bucket = global.REDEEM_LIMIT[userIp] || [];
-        const recent = bucket.filter(t => now - t < 60000);
-
-        if (recent.length >= 5) {
-            return reply.code(429).send({
-                valid: false,
-                reason: "Too many attempts"
-            });
-        }
-
-        recent.push(now);
-        global.REDEEM_LIMIT[userIp] = recent;
-
-        const keyDoc = await KeyModel.findOne({
-            key: new RegExp(`^${key}$`, "i")
+        // 1. checa key permanente já existente nesse IP
+        let permKey = await KeyModel.findOne({
+            ip: userIp,
+            isPermanent: true
         });
 
-        if (!keyDoc)
-            return reply.send({ valid: false, reason: "Invalid key" });
+        let keyDoc;
+        let isNew = false;
+        let restanteMs;
 
-        // já bindado
-        if (keyDoc.ip !== "MANUAL" && keyDoc.ip !== userIp) {
-            return reply.send({ valid: false, reason: "Already used" });
+        if (permKey) {
+            // key permanente existente
+            keyDoc = permKey;
+            restanteMs = -1; // infinito
+        } else {
+            // 2. checa se já existe key temporária válida
+            let existing = await KeyModel.findOne({ ip: userIp });
+
+            if (existing && !existing.isPermanent) {
+                const ms = DURACAO_KEY - (Date.now() - existing.createdAt.getTime());
+
+                if (ms > 0) {
+                    // key ainda valida, mostra ela
+                    keyDoc = existing;
+                    restanteMs = ms;
+                    isNew = false;
+                } else {
+                    // key expirada, deleta e cria nova
+                    await KeyModel.deleteOne({ _id: existing._id });
+                    existing = null;
+                }
+            }
+
+            // 3. se nao tem key valida, gera nova
+            if (!keyDoc) {
+                const chars = "123579";
+                let rand = "";
+
+                for (let i = 0; i < 6; i++) {
+                    rand += chars[Math.floor(Math.random() * chars.length)];
+                }
+
+                keyDoc = await KeyModel.create({
+                    ip: userIp,
+                    key: `Asfixy-${rand}`.toLowerCase(),
+                    isPermanent: false
+                });
+
+                restanteMs = DURACAO_KEY;
+                isNew = true;
+            }
         }
 
-        // ativa IP LOCK (CORRETO)
-        keyDoc.ip = userIp;
-        await keyDoc.save();
+        const expiresMin = Math.ceil(restanteMs / 60000);
 
-        return reply.send({
-            valid: true,
-            msg: "Activated",
-            key: keyDoc.key,
-            permanent: keyDoc.isPermanent
-        });
-
-    } catch {
-        return reply.code(500).send({ valid: false });
-    }
-
-    const html = `
+        const html = `
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -584,6 +665,7 @@ canvas{
 
 .new{background:var(--success);color:#000;}
 .old{background:#111;border:1px solid rgba(255,255,255,0.1);}
+.perm{background:var(--accent);color:#fff;}
 
 /* KEY BOX */
 .key{
@@ -662,21 +744,25 @@ button:hover{
 
 <div class="container">
 
-${isNew 
-    ? '<div class="badge new">NEW KEY GENERATED</div>' 
-    : '<div class="badge old">ACTIVE SESSION</div>'}
+${keyDoc.isPermanent
+                ? '<div class="badge perm">PERMANENT KEY</div>'
+                : (isNew
+                    ? '<div class="badge new">NEW KEY GENERATED</div>'
+                    : '<div class="badge old">ACTIVE SESSION</div>')}
 
 <div class="title">ASFIXY ACCESS</div>
 
-<div class="key" id="key">${keyDoc.key}</div>
+<div class="key" id="key" onclick="copy()">${escapeHtml(keyDoc.key)}</div>
 
-<div class="timer" id="timer" data-ms="${restanteMs}">--:--</div>
+${keyDoc.isPermanent
+                ? '<div class="timer">INFINITY</div>'
+                : '<div class="timer" id="timer" data-ms="' + restanteMs + '">--:--</div>'}
 
 <button onclick="copy()">COPY KEY</button>
 
 <div class="info">
-IP: ${userIp}<br>
-Expires in ${expiresMin} min
+IP: ${escapeHtml(userIp)}<br>
+${keyDoc.isPermanent ? 'Never expires' : 'Expires in ' + expiresMin + ' min'}
 </div>
 
 </div>
@@ -702,6 +788,8 @@ function showToast(msg){
 /* TIMER */
 function update(){
     const el=document.getElementById('timer');
+    if(!el) return; // permanent keys dont have timer
+    
     let ms=parseInt(el.dataset.ms);
 
     if(ms<=0){el.innerText="EXPIRED";return;}
@@ -752,12 +840,90 @@ localStorage.setItem("asfixy_key", document.getElementById("key").innerText);
 </html>
 `;
 
-    reply.type('text/html').send(html);
+        reply.setCookie('asfixy_key', keyDoc.key, { path: '/', maxAge: 31536000 });
+        return reply.type('text/html').send(html);
+
+    } catch (e) {
+        console.error("get-key error:", e);
+        return reply.code(500).send({ error: "Internal error" });
+    }
+});
+
+// --- PUBLIC ROUTES (NO KEY REQUIRED FOR REDEEM) ---
+fastify.post('/redeem-key', async (request, reply) => {
+    try {
+        const userIp = getClientIp(request);
+        const key = String(request.body?.key || "").trim();
+
+        // rate limit unico (removido duplicacao)
+        if (!rateLimit(userIp, 5, 60000)) {
+            return reply.code(429).send({
+                valid: false,
+                reason: "Too many requests",
+                message: "Too many requests"
+            });
+        }
+
+        if (!key)
+            return reply.code(400).send({ valid: false, reason: "Key required", message: "Key required" });
+
+        // busca case-insensitive usando collation (seguro e retrocompativel)
+        const keyDoc = await KeyModel.findOne({
+            key: key.toLowerCase()
+        }).collation({ locale: 'en', strength: 2 });
+
+        if (!keyDoc)
+            return reply.send({ valid: false, reason: "Invalid key", message: "Invalid key" });
+
+        // já bindado a outro IP
+        if (keyDoc.ip !== "MANUAL" && keyDoc.ip !== userIp) {
+            return reply.send({ valid: false, reason: "Already used", message: "Key already bound to another device" });
+        }
+
+        // ativa IP LOCK
+        keyDoc.ip = userIp;
+        await keyDoc.save();
+
+        reply.setCookie('asfixy_key', keyDoc.key, { path: '/', maxAge: 31536000 });
+
+        return reply.send({
+            valid: true,
+            msg: "Activated",
+            key: keyDoc.key,
+            permanent: keyDoc.isPermanent
+        });
+
+    } catch (err) {
+        console.error("redeem-key error:", err);
+        return reply.code(500).send({ valid: false, reason: "Internal error" });
+    }
+});
+
+// --- SCRIPT PROVIDER ---
+fastify.get('/script/:name', async (request, reply) => {
+    const { name } = request.params;
+    const validScripts = ['main', 'dataloss', 'crash'];
+
+    if (!validScripts.includes(name)) {
+        return reply.code(404).send("Script not found");
+    }
+
+    try {
+        const url = `https://raw.githubusercontent.com/whylovehurts/asfixy-exec/refs/heads/main/src/${name}.js`;
+        const response = await fetch(url);
+        if (!response.ok) throw new Error("Failed to fetch script");
+
+        const scriptContent = await response.text();
+        return reply.type('application/javascript').send(scriptContent);
+    } catch (err) {
+        console.error("Script fetch error:", err);
+        return reply.code(500).send("Error loading script");
+    }
 });
 
 // --- DATA ROUTES ---
 fastify.get('/status', async (request, reply) => {
-    const userKey = request.query.key || request.headers['x-asfixy-key'];
+    const userKey = request.query.key || request.headers['x-asfixy-key'] || request.cookies?.asfixy_key;
     const query = userKey === MASTER_KEY ? {} : { ownerKey: userKey };
 
     const data = await FarmModel.find(query).select('-_id -__v');
@@ -816,6 +982,7 @@ body{
 
 /* CARD */
 .card{
+    position: relative;
     background:var(--card);
     backdrop-filter:blur(20px);
     padding:20px;
@@ -826,6 +993,26 @@ body{
 .card:hover{
     border-color:var(--accent);
     transform:translateY(-5px);
+}
+
+/* COPY BTN */
+.copy-btn {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    background: rgba(255,51,51,0.1);
+    border: 1px solid rgba(255,51,51,0.3);
+    color: var(--accent);
+    padding: 4px 10px;
+    border-radius: 8px;
+    font-size: 0.65rem;
+    font-weight: bold;
+    cursor: pointer;
+    transition: 0.2s;
+}
+.copy-btn:hover {
+    background: var(--accent);
+    color: #fff;
 }
 
 /* TEXT */
@@ -857,6 +1044,25 @@ body{
     font-size:0.7rem;
     opacity:0.3;
 }
+
+/* TOAST */
+.toast{
+    position:fixed;
+    bottom:25px;
+    right:25px;
+    background:#111;
+    border:1px solid var(--accent);
+    padding:12px 18px;
+    border-radius:12px;
+    opacity:0;
+    transform:translateY(20px);
+    transition:.3s;
+    pointer-events:none;
+}
+.toast.show{
+    opacity:1;
+    transform:translateY(0);
+}
 </style>
 </head>
 
@@ -872,6 +1078,7 @@ body{
 <div class="grid" id="grid">
 ${data.map(f => `
 <div class="card" data-name="${f.bakeryName}">
+    <button class="copy-btn" onclick="copySave('${escapeJs(f.saveKey || '')}')">COPY</button>
     <div class="name">${f.bakeryName}</div>
     <div class="row">Cookies: ${f.cookies ?? 0}</div>
     <div class="row">Prestige: ${f.prestige ?? 0}</div>
@@ -887,12 +1094,26 @@ ${data.map(f => `
 Realtime Farm Monitor • Asfixy Engine
 </div>
 
+<div class="toast" id="toast">Save copied!</div>
+
 <script>
 function filter(v){
     v = v.toLowerCase();
     document.querySelectorAll('.card').forEach(c=>{
         const name = c.getAttribute('data-name').toLowerCase();
         c.style.display = name.includes(v) ? 'block' : 'none';
+    });
+}
+
+function copySave(saveStr) {
+    if (!saveStr) return;
+    navigator.clipboard.writeText(saveStr).then(() => {
+        const t = document.getElementById('toast');
+        t.innerText = "Save copied!";
+        t.classList.add('show');
+        setTimeout(() => t.classList.remove('show'), 2000);
+    }).catch(err => {
+        alert("Failed to copy save.");
     });
 }
 </script>
@@ -917,7 +1138,8 @@ fastify.post('/update-farm', {
     if (!key)
         return reply.code(401).send({ error: "Missing key" });
 
-    const keyDoc = await KeyModel.findOne({ key });
+    const keyDoc = await KeyModel.findOne({ key: key.toLowerCase() })
+        .collation({ locale: 'en', strength: 2 });
     if (!keyDoc)
         return reply.code(403).send({ error: "Invalid key" });
 
@@ -971,7 +1193,7 @@ fastify.post('/update-farm', {
 
 fastify.get('/download', async (r, rp) => rp.redirect('https://gofile.io/d/9c8Wlb'));
 fastify.get('/', async (request, reply) => {
-const html = `
+    const html = `
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1211,10 +1433,7 @@ canvas {
 
 <div class="grid">
 
-<div class="card" onclick="go('/download')">
-<h2>DOWNLOAD</h2>
-<p>Get latest extension engine build.</p>
-</div>
+
 
 <div class="card" onclick="go('/get-key')">
 <h2>GET KEY</h2>
@@ -1226,10 +1445,14 @@ canvas {
 <p>Activate IP-LOCK for Premium Keys.</p>
 </div>
 
-<div class="card" onclick="copyApi()">
-<h2>API STATUS</h2>
-<p>Copy url endpoint.</p>
-<button class="btn">COPY</button>
+<div class="card" onclick="go('/status')">
+<h2>FARM STATUS</h2>
+<p>View your live farms.</p>
+</div>
+
+<div class="card" onclick="go('/engine')">
+<h2>ENGINE</h2>
+<p>Execute scripts remotely.</p>
 </div>
 
 <div class="card" onclick="go('https://discord.gg/uSvZ5BJuJ4')">
@@ -1304,18 +1527,31 @@ draw();
 </body>
 </html>
 `;
-reply.type('text/html').send(html);
+    reply.type('text/html').send(html);
 });
 
 let ENGINE_STATE = {};
+
+// pull request da extesao
+fastify.get('/engine/pull', async (req, reply) => {
+    const key = req.headers['x-asfixy-key'];
+    if (!key) return reply.code(401).send({ error: "Missing key" });
+
+    if (!ENGINE_STATE[key]) ENGINE_STATE[key] = { history: [] };
+
+    ENGINE_STATE[key].lastPing = Date.now();
+
+    return {
+        code: ENGINE_STATE[key].code || null,
+        updatedAt: ENGINE_STATE[key].updatedAt || 0
+    };
+});
 
 // recebe código do site
 fastify.post('/engine/execute', async (req, reply) => {
     const key = req.headers['x-asfixy-key'];
     const code = req.body?.code;
-
-    const userIp =
-        req.headers['x-forwarded-for']?.split(',')[0] || req.ip;
+    const userIp = getClientIp(req);
 
     if (!key)
         return reply.code(401).send({ error: "Missing key" });
@@ -1326,9 +1562,18 @@ fastify.post('/engine/execute', async (req, reply) => {
     if (code.length > 5000)
         return reply.code(400).send({ error: "Code too large" });
 
-    const keyDoc = await KeyModel.findOne({ key });
+    const keyDoc = await KeyModel.findOne({ key: key.toLowerCase() })
+        .collation({ locale: 'en', strength: 2 });
     if (!keyDoc)
         return reply.code(403).send({ error: "Invalid key" });
+
+    // Verificacao de game aberto e extensão conectada
+    const state = ENGINE_STATE[key];
+    const isExtensionPinged = state && state.lastPing && (Date.now() - state.lastPing < 5000); // 5 secs
+
+    if (!isExtensionPinged) {
+        return reply.code(400).send({ error: "Game is not open or extension is not installed/connected!" });
+    }
 
     // cooldown por execução
     if (
@@ -1360,7 +1605,7 @@ fastify.post('/engine/execute', async (req, reply) => {
 
 fastify.get('/engine', async (req, reply) => {
 
-const html = `
+    const html = `
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1452,16 +1697,38 @@ box-shadow:0 0 15px rgba(255,51,51,0.4);
 
 /* CONSOLE */
 .console{
-height:120px;
-background:#000;
-margin-top:10px;
+flex:0.4;
+background:#050505;
+border:1px solid rgba(255,255,255,0.05);
 border-radius:12px;
+margin-top:15px;
 padding:10px;
+overflow-y:auto;
 font-size:11px;
-overflow:auto;
-opacity:0.7;
+color:#33ff77;
 }
 
+/* TOAST */
+.toast{
+position:fixed;
+bottom:25px;
+right:25px;
+background:#111;
+border:1px solid var(--accent);
+padding:12px 18px;
+border-radius:12px;
+opacity:0;
+transform:translateY(20px);
+transition:.3s;
+font-family: 'Inter', sans-serif;
+color: #fff;
+}
+.toast.show{
+opacity:1;
+transform:translateY(0);
+}
+.toast.error{ border-color: var(--accent); }
+.toast.success{ border-color: #33ff77; }
 </style>
 </head>
 
@@ -1489,7 +1756,16 @@ Game.Earn(1000000);
 
 </div>
 
+<div class="toast" id="toast">Message</div>
+
 <script>
+
+function showToast(msg, type = "error"){
+    const t=document.getElementById('toast');
+    t.innerText=msg;
+    t.className = 'toast show ' + type;
+    setTimeout(()=>t.classList.remove('show'), 3000);
+}
 
 function log(msg){
     const el = document.getElementById('log');
@@ -1527,10 +1803,13 @@ async function execute(){
     });
 
     if(res.ok){
+        showToast("Code executed successfully!", "success");
         log("> sent to engine");
     }else{
-        const t = await res.text();
-        log("> error: " + t);
+        let data = {};
+        try { data = await res.json(); } catch(e) {}
+        showToast(data.error || "Execution failed", "error");
+        log("> error: " + (data.error || "unknown"));
     }
 }
 
@@ -1544,15 +1823,27 @@ function clearCode(){
 </html>
 `;
 
-reply.type('text/html').send(html);
+    reply.type('text/html').send(html);
 });
 
+// Limpeza periodica de rate limits e ENGINE_STATE (evita memory leak)
 setInterval(() => {
     const now = Date.now();
 
+    // Limpa ENGINE_STATE
     for (const k in ENGINE_STATE) {
         if (now - ENGINE_STATE[k].updatedAt > 60000) {
             delete ENGINE_STATE[k];
+        }
+    }
+
+    // Limpa rate limit Map (RL)
+    for (const [ip, times] of RL.entries()) {
+        const fresh = times.filter(t => now - t < 60000);
+        if (fresh.length === 0) {
+            RL.delete(ip);
+        } else {
+            RL.set(ip, fresh);
         }
     }
 }, 30000);
