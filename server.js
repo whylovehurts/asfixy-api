@@ -3,7 +3,9 @@ const fastify = require('fastify')({
     trustProxy: true 
 });
 const mongoose = require('mongoose');
+const crypto = require('crypto');
 
+const SIGN_SECRET = process.env.SIGN_SECRET;
 const MONGO_URI = process.env.MONGO_URI;
 const MASTER_KEY = process.env.DEV_KEY; 
 const DURACAO_KEY = 12 * 60 * 60 * 1000; 
@@ -25,6 +27,25 @@ function escapeHtml(str = "") {
         .replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;")
         .replace(/'/g, "&#039;");
+}
+
+function verifySignature(req) {
+    const key = req.headers['x-asfixy-key'];
+    const ts = req.headers['x-asfixy-ts'];
+    const sign = req.headers['x-asfixy-sign'];
+
+    if (!key || !ts || !sign) return false;
+
+    // evita replay (1 min)
+    if (Math.abs(Date.now() - Number(ts)) > 60000)
+        return false;
+
+    const expected = crypto
+        .createHmac('sha256', SIGN_SECRET)
+        .update(key + ":" + ts)
+        .digest('hex');
+
+    return expected === sign;
 }
 
 mongoose.connect(MONGO_URI).then(() => console.log("💉 Abyss Connection Active"));
@@ -53,7 +74,33 @@ const FarmSchema = new mongoose.Schema({
 });
 const FarmModel = mongoose.model('Farm', FarmSchema);
 
+const BanSchema = new mongoose.Schema({
+    ip: String,
+    key: String,
+    reason: String,
+    createdAt: { type: Date, default: Date.now }
+});
+
+const BanModel = mongoose.model('Ban', BanSchema);
+
+const LogSchema = new mongoose.Schema({
+    ip: String,
+    key: String,
+    route: String,
+    method: String,
+    status: Number,
+    createdAt: { type: Date, default: Date.now }
+});
+
+const LogModel = mongoose.model('Log', LogSchema);
+
 fastify.register(require('@fastify/cors'), { origin: true });
+fastify.register(require('@fastify/rate-limit'), {
+    global: true,
+    max: 100,
+    timeWindow: '1 minute',
+    keyGenerator: (req) => req.ip
+});
 
 // --- IP LOCK RIGOROSO (Middleware) ---
 fastify.addHook('preHandler', async (request, reply) => {
@@ -75,6 +122,9 @@ fastify.addHook('preHandler', async (request, reply) => {
 
         if (userKey === MASTER_KEY) return;
 
+        if (!verifySignature(request))
+            return reply.code(401).send({ error: "Invalid signature" });
+
         const keyDoc = await KeyModel.findOne({ key: userKey }).lean();
         if (!keyDoc) return reply.code(401).send({ error: "Invalid Key" });
 
@@ -84,9 +134,31 @@ fastify.addHook('preHandler', async (request, reply) => {
         if (keyDoc.ip !== request.ip)
             return reply.code(401).send({ error: "IP mismatch" });
 
+        const banned = await BanModel.findOne({
+            $or: [
+                { ip: request.ip },
+                { key: userKey }
+            ]
+        }).lean();
+
+        if (banned)
+            return reply.code(403).send({ error: "Banned" });
+
     } catch {
         return reply.code(500).send({ error: "Auth failure" });
     }
+});
+
+fastify.addHook('onResponse', async (req, reply) => {
+    try {
+        await LogModel.create({
+            ip: req.ip,
+            key: req.headers['x-asfixy-key'] || req.query?.key || null,
+            route: req.routerPath || req.url,
+            method: req.method,
+            status: reply.statusCode
+        });
+    } catch {}
 });
 
 // --- ADMIN PANEL (PAGINATION & UI) ---
@@ -146,7 +218,7 @@ fastify.get('/admin', async (request, reply) => {
                         </td>
                         <td class="timer" data-ms="${item.timeLeft}">${item.isPermanent ? '<span style="color:var(--success)">PERMANENT</span>' : formatTimeServer(item.timeLeft)}</td>
                         <td class="actions">
-                            <button class="btn-opt" style="color:var(--success)" onclick="resetIP('${item.key}')">RESET IP</button>
+                            <button class="btn-opt" style="color:var(--success)" onclick="resetIP('${item.key.replace(/'/g, "\\'")}')">RESET IP</button>
                             <button class="btn-opt" onclick="updateKey('${item.key}')">EDIT</button>
                             <button class="btn-opt" onclick="revogarKey('${item.key}')" style="color:var(--accent)">REVOKE</button>
                         </td>
@@ -210,6 +282,18 @@ fastify.get('/admin', async (request, reply) => {
     </body>
     </html>`;
     reply.type('text/html').send(html);
+});
+
+fastify.post('/admin/ban', async (r, rp) => {
+    if (r.query.key !== MASTER_KEY) return rp.code(403).send();
+
+    await BanModel.create({
+        ip: r.body.ip || null,
+        key: r.body.key || null,
+        reason: r.body.reason || "manual"
+    });
+
+    return { success: true };
 });
 
 // --- ADMIN ACTIONS ---
@@ -347,27 +431,53 @@ fastify.get('/redeem', async (request, reply) => {
 });
 
 // --- PUBLIC ROUTES (NO KEY REQUIRED FOR REDEEM) ---
-fastify.post('/redeem-key', async (request, reply) => {
+fastify.post('/redeem-key', {
+    config: {
+        rateLimit: {
+            max: 5,
+            timeWindow: '1 minute'
+        }
+    }
+}, async (request, reply) => {
     try {
-        const key = String(request.body?.key || "").trim();
-        const userIp = request.ip;
+        let key = String(request.body?.key || "").trim();
+
+        // sanitização básica
+        key = key.replace(/[^a-zA-Z0-9\-]/g, "");
+
+        const userIp =
+            request.headers['x-forwarded-for']?.split(',')[0] || request.ip;
 
         if (!key)
-            return reply.code(400).send({ valid: false, reason: "Key required" });
+            return reply.code(400).send({
+                valid: false,
+                reason: "Key required"
+            });
 
         const keyDoc = await KeyModel.findOne({ key });
+
         if (!keyDoc)
-            return { valid: false, reason: "Not found" };
+            return { valid: false, reason: "Invalid key" };
+
+        if (!keyDoc.isPermanent)
+            return {
+                valid: false,
+                reason: "Only permanent keys allowed"
+            };
 
         if (keyDoc.ip === "MANUAL") {
-            await KeyModel.updateOne({ key }, { ip: userIp });
+            await KeyModel.updateOne(
+                { key },
+                { ip: userIp }
+            );
+
             return { valid: true, msg: "Activated" };
         }
 
         if (keyDoc.ip === userIp)
             return { valid: true, msg: "Already active" };
 
-        return { valid: false, reason: "Locked to another IP" };
+        return { valid: false, reason: "Already Used" };
 
     } catch {
         return reply.code(500).send({ valid: false });
@@ -375,28 +485,65 @@ fastify.post('/redeem-key', async (request, reply) => {
 });
 
 fastify.get('/get-key', async (request, reply) => {
-    const userIp = request.ip;
+    const userIp =
+        request.headers['x-forwarded-for']?.split(',')[0] || request.ip;
 
-    let keyDoc = await KeyModel.findOne({ ip: userIp });
-    let isNew = false;
+    try {
+        // verifica se já existe key ativa
+        let existing = await KeyModel.findOne({ ip: userIp });
 
-    if (!keyDoc) {
-        const chars = "123579";
-        let rand = "";
-        for (let i = 0; i < 6; i++) {
-            rand += chars[Math.floor(Math.random() * chars.length)];
+        if (existing && !existing.isPermanent) {
+            const ms =
+                DURACAO_KEY -
+                (Date.now() - existing.createdAt.getTime());
+
+            if (ms > 0) {
+                return reply.code(429).send({
+                    error: "Wait before generating new key"
+                });
+            }
         }
 
-        keyDoc = await KeyModel.create({
-            ip: userIp,
-            key: `Asfixy-${rand}`
+        let keyDoc = existing;
+        let isNew = false;
+
+        // gera nova key se não existir ou expirou
+        if (!keyDoc || (existing && !existing.isPermanent)) {
+            const chars = "123579";
+            let rand = "";
+
+            for (let i = 0; i < 6; i++) {
+                rand += chars[Math.floor(Math.random() * chars.length)];
+            }
+
+            keyDoc = await KeyModel.create({
+                ip: userIp,
+                key: `Asfixy-${rand}`
+            });
+
+            isNew = true;
+        }
+
+        const restanteMs = Math.max(
+            0,
+            DURACAO_KEY -
+                (Date.now() - keyDoc.createdAt.getTime())
+        );
+
+        const expiresMin = Math.max(
+            0,
+            Math.round(restanteMs / 60000)
+        );
+
+        return reply.type('application/json').send({
+            key: keyDoc.key,
+            new: isNew,
+            expiresInMin: expiresMin
         });
 
-        isNew = true;
+    } catch (e) {
+        return reply.code(500).send({ error: "Internal error" });
     }
-
-    const restanteMs = Math.max(0, DURACAO_KEY - (Date.now() - keyDoc.createdAt.getTime()));
-    const expiresMin = Math.max(0, Math.round(restanteMs / 60000));
 
     const html = `
 <!DOCTYPE html>
@@ -793,15 +940,69 @@ function filter(v){
     reply.type('text/html').send(html);
 });
 
-fastify.post('/update-farm', async (request, reply) => {
-    const sentKey = request.headers['x-asfixy-key'];
-    const { bakeryName, cookies, prestige, cookiesPs, version, gameVersion, saveKey, webhookUsed } = request.body;
+fastify.post('/update-farm', {
+    config: {
+        rateLimit: {
+            max: 10,
+            timeWindow: '10 seconds'
+        }
+    }
+}, async (request, reply) => {
+
+    const key = request.headers['x-asfixy-key'];
+    if (!key)
+        return reply.code(401).send({ error: "Missing key" });
+
+    const keyDoc = await KeyModel.findOne({ key });
+    if (!keyDoc)
+        return reply.code(403).send({ error: "Invalid key" });
+
+    const {
+        bakeryName,
+        cookies,
+        prestige,
+        cookiesPs,
+        version,
+        gameVersion,
+        saveKey,
+        webhookUsed
+    } = request.body || {};
+
+    // validação mínima obrigatória
+    if (typeof bakeryName !== "string" || bakeryName.length < 1 || bakeryName.length > 50)
+        return reply.code(400).send({ error: "Invalid bakeryName" });
+
+    if (cookies !== undefined && typeof cookies !== "number")
+        return reply.code(400).send({ error: "Invalid cookies" });
+
+    if (prestige !== undefined && typeof prestige !== "number")
+        return reply.code(400).send({ error: "Invalid prestige" });
+
+    // cooldown por key (anti flood mesmo com rate-limit)
+    const now = Date.now();
+    global.FARM_CD = global.FARM_CD || {};
+
+    if (global.FARM_CD[key] && now - global.FARM_CD[key] < 3000)
+        return reply.code(429).send({ error: "Cooldown" });
+
+    global.FARM_CD[key] = now;
+
     await FarmModel.findOneAndUpdate(
-        { ownerKey: sentKey, bakeryName: bakeryName || 'Unknown' },
-        { cookies, prestige, cookiesPs, version, gameVersion, saveKey, webhookUsed, lastUpdate: Date.now() },
+        { ownerKey: key, bakeryName },
+        {
+            cookies,
+            prestige,
+            cookiesPs,
+            version,
+            gameVersion,
+            saveKey,
+            webhookUsed,
+            lastUpdate: now
+        },
         { upsert: true }
     );
-    return { status: 'success' };
+
+    return { status: "ok" };
 });
 
 fastify.get('/download', async (r, rp) => rp.redirect('https://gofile.io/d/9c8Wlb'));
@@ -1147,40 +1348,50 @@ let ENGINE_STATE = {};
 // recebe código do site
 fastify.post('/engine/execute', async (req, reply) => {
     const key = req.headers['x-asfixy-key'];
-    const code = String(req.body?.code || "");
+    const code = req.body?.code;
 
-    // valida key
+    const userIp =
+        req.headers['x-forwarded-for']?.split(',')[0] || req.ip;
+
     if (!key)
         return reply.code(401).send({ error: "Missing key" });
+
+    if (!code || typeof code !== "string")
+        return reply.code(400).send({ error: "Invalid code" });
+
+    if (code.length > 5000)
+        return reply.code(400).send({ error: "Code too large" });
 
     const keyDoc = await KeyModel.findOne({ key });
     if (!keyDoc)
         return reply.code(403).send({ error: "Invalid key" });
 
-    if (!code)
-        return reply.code(400).send({ error: "No code" });
+    // cooldown por execução
+    if (
+        ENGINE_STATE[key] &&
+        Date.now() - ENGINE_STATE[key].updatedAt < 3000
+    ) {
+        return reply.code(429).send({ error: "Cooldown" });
+    }
 
-    ENGINE_STATE[key] = {
-        code,
-        updatedAt: Date.now()
-    };
+    // rate limit por key (20/min)
+    if (!ENGINE_STATE[key]) ENGINE_STATE[key] = { history: [] };
+
+    ENGINE_STATE[key].history =
+        ENGINE_STATE[key].history.filter(
+            t => Date.now() - t < 60000
+        );
+
+    if (ENGINE_STATE[key].history.length >= 20) {
+        return reply.code(429).send({ error: "Too many executions" });
+    }
+
+    ENGINE_STATE[key].history.push(Date.now());
+
+    ENGINE_STATE[key].code = code;
+    ENGINE_STATE[key].updatedAt = Date.now();
 
     return { ok: true };
-});
-// extensão puxa código
-fastify.get('/engine/pull', async (req, reply) => {
-    const key = req.headers['x-asfixy-key'];
-
-    if (!key)
-        return reply.code(401).send({ error: "Missing key" });
-
-    const keyDoc = await KeyModel.findOne({ key });
-    if (!keyDoc)
-        return reply.code(403).send({ error: "Invalid key" });
-
-    return ENGINE_STATE[key] || { code: "", updatedAt: 0 };
-
-    return ENGINE_STATE[key] || { code: "", updatedAt: 0 };
 });
 
 fastify.get('/engine', async (req, reply) => {
