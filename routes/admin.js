@@ -67,15 +67,7 @@ module.exports = async function (fastify, opts) {
         } catch (err) { return reply.code(400).send({ error: "Key already exists." }); }
     });
 
-// --- Rotas de Ação do Admin ---
-    fastify.post('/admin/create-key', async (request, reply) => {
-        if (request.query.key !== MASTER_KEY) return reply.code(403).send();
-        const { customName, permanent } = request.body;
-        try {
-            await KeyModel.create({ ip: "MANUAL", key: customName, isPermanent: permanent, createdAt: new Date() });
-            return { success: true };
-        } catch (err) { return reply.code(400).send({ error: "Key already exists." }); }
-    });
+// (duplicate create-key route removed)
 
     fastify.post('/admin/edit-full', async (request, reply) => {
         if (request.query.key !== MASTER_KEY) return reply.code(403).send();
