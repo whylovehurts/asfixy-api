@@ -1333,29 +1333,24 @@ function openGame(){
     window.open(url, "_blank");
 }
 
-async function execute(){
-    const code = document.getElementById('code').value;
-    const key = localStorage.getItem("asfixy_key");
+function inject(code){
+    try{
+        const script = document.createElement("script");
 
-    if(!key){
-        log("> no key found, go to /get-key");
-        return;
-    }
+        script.textContent = `
+            try {
+                (function(){
+${code}
+                })();
+            } catch(e) {
+                console.log("[ASFIXY EXEC ERROR]", e);
+            }
+        `;
 
-    const res = await fetch('/engine/execute', {
-        method:'POST',
-        headers:{
-            'Content-Type':'application/json',
-            'x-asfixy-key': key
-        },
-        body:JSON.stringify({code})
-    });
-
-    if(res.ok){
-        log("> sent to engine");
-    }else{
-        const t = await res.text();
-        log("> error: " + t);
+        document.documentElement.appendChild(script);
+        script.remove();
+    }catch(e){
+        console.log("[ASFIXY] inject fail", e);
     }
 }
 
