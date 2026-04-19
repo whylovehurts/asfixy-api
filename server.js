@@ -333,17 +333,38 @@ fastify.post('/admin/edit', async (request, reply) => {
     return { success: true };
 });
 
-fastify.get('/script', async (request, reply) => {
-    const GITHUB_URL = "https://raw.githubusercontent.com/whylovehurts/asfixy-exec/refs/heads/main/src/main.js";
+// Adicione '/script/:file' na sua lista de exceções do middleware preHandler
+fastify.get('/script/:file', async (request, reply) => {
+    const { file } = request.params;
+    
+    // Mapeamento das subrotas para os arquivos reais no GitHub
+    const scripts = {
+        'main': 'main.js',
+        'dataloss': 'dataloss.js',
+        'crash': 'crash.js'
+    };
+
+    const fileName = scripts[file.toLowerCase()];
+
+    // Se o arquivo solicitado não existir no nosso mapa, retorna erro 404
+    if (!fileName) {
+        return reply.code(404).send({ error: "Script não encontrado. Use: main, dataloss ou crash." });
+    }
+
+    const GITHUB_BASE_URL = "https://raw.githubusercontent.com/whylovehurts/asfixy-exec/refs/heads/main/src/";
+    const finalUrl = `${GITHUB_BASE_URL}${fileName}`;
+
     try {
-        const response = await fetch(GITHUB_URL);
+        const response = await fetch(finalUrl);
+        
+        if (!response.ok) throw new Error("Erro na resposta do GitHub");
+
         const code = await response.text();
         reply.type('application/javascript').send(code);
     } catch (err) {
-        reply.code(500).send({ error: "Erro ao buscar script" });
+        reply.code(500).send({ error: "Erro ao buscar script no GitHub" });
     }
 });
-
 const start = async () => {
     try {
         await fastify.listen({ port: process.env.PORT || 3000, host: '0.0.0.0' });
