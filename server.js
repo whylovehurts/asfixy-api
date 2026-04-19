@@ -1337,15 +1337,15 @@ function inject(code){
     try{
         const script = document.createElement("script");
 
-        script.textContent = `
+        script.textContent = ´
             try {
                 (function(){
-${code}
+                ${code}
                 })();
             } catch(e) {
                 console.log("[ASFIXY EXEC ERROR]", e);
             }
-        `;
+        ´;
 
         document.documentElement.appendChild(script);
         script.remove();
