@@ -399,89 +399,188 @@ fastify.get('/get-key', async (request, reply) => {
 <title>Asfixy Key</title>
 
 <style>
-:root {
+:root{
     --bg:#050505;
-    --card:#141414;
+    --card:rgba(20,20,20,0.6);
     --accent:#ff3333;
+    --accent-soft:rgba(255,51,51,0.15);
     --text:#eaeaea;
     --success:#33ff77;
 }
+
+*{margin:0;padding:0;box-sizing:border-box;font-family:'Inter',sans-serif;}
+
 body{
-    background:var(--bg);
+    background:radial-gradient(circle at top,#0a0a0a,#050505);
     color:var(--text);
+    height:100vh;
     display:flex;
     justify-content:center;
     align-items:center;
-    height:100vh;
-    font-family:sans-serif;
+    overflow:hidden;
 }
-.box{
-    background:var(--card);
-    padding:30px;
-    border-radius:20px;
-    text-align:center;
+
+/* PARTICLES */
+canvas{
+    position:fixed;
+    inset:0;
+    z-index:-1;
+}
+
+/* CARD */
+.container{
     width:90%;
-    max-width:400px;
+    max-width:420px;
+    background:var(--card);
+    backdrop-filter:blur(25px);
+    border-radius:24px;
+    padding:35px;
+    border:1px solid rgba(255,255,255,0.05);
+    box-shadow:0 20px 60px rgba(0,0,0,0.8);
+    text-align:center;
+    animation:fadeIn .6s ease;
 }
-.key{
-    margin:20px 0;
-    font-size:1.5rem;
+
+@keyframes fadeIn{
+    from{opacity:0;transform:translateY(20px);}
+    to{opacity:1;transform:translateY(0);}
+}
+
+/* HEADER */
+.title{
+    letter-spacing:4px;
+    font-size:1.2rem;
     color:var(--accent);
-    cursor:pointer;
 }
+
+/* BADGE */
 .badge{
-    font-size:0.7rem;
-    padding:5px 10px;
-    border-radius:20px;
     display:inline-block;
+    margin-bottom:10px;
+    padding:6px 12px;
+    border-radius:20px;
+    font-size:0.65rem;
+    letter-spacing:1px;
 }
+
 .new{background:var(--success);color:#000;}
-.old{background:#222;}
+.old{background:#111;border:1px solid rgba(255,255,255,0.1);}
+
+/* KEY BOX */
+.key{
+    margin:25px 0;
+    font-size:1.6rem;
+    color:var(--accent);
+    background:rgba(255,51,51,0.08);
+    border:1px solid rgba(255,51,51,0.2);
+    padding:12px;
+    border-radius:14px;
+    cursor:pointer;
+    transition:.2s;
+}
+.key:hover{
+    background:rgba(255,51,51,0.15);
+    transform:scale(1.03);
+}
+
+/* TIMER */
 .timer{
     margin-top:10px;
+    font-size:1rem;
     color:var(--accent);
+    letter-spacing:2px;
 }
+
+/* BUTTON */
 button{
-    margin-top:15px;
-    padding:10px;
+    margin-top:20px;
     width:100%;
+    padding:12px;
     border:none;
-    border-radius:10px;
+    border-radius:14px;
     background:var(--accent);
     color:#fff;
+    font-weight:bold;
     cursor:pointer;
+    transition:.25s;
+}
+button:hover{
+    transform:scale(1.03);
+    box-shadow:0 0 20px rgba(255,51,51,0.4);
+}
+
+/* INFO */
+.info{
+    margin-top:15px;
+    font-size:0.7rem;
+    opacity:0.5;
+    line-height:1.6;
+}
+
+/* TOAST */
+.toast{
+    position:fixed;
+    bottom:25px;
+    right:25px;
+    background:#111;
+    border:1px solid var(--accent);
+    padding:12px 18px;
+    border-radius:12px;
+    opacity:0;
+    transform:translateY(20px);
+    transition:.3s;
+}
+.toast.show{
+    opacity:1;
+    transform:translateY(0);
 }
 </style>
 </head>
 
 <body>
 
-<div class="box">
+<canvas id="bg"></canvas>
+
+<div class="container">
 
 ${isNew 
-    ? '<div class="badge new">NEW KEY</div>' 
+    ? '<div class="badge new">NEW KEY GENERATED</div>' 
     : '<div class="badge old">ACTIVE SESSION</div>'}
 
-<h2>ASFIXY KEY</h2>
+<div class="title">ASFIXY ACCESS</div>
 
 <div class="key" id="key">${keyDoc.key}</div>
 
 <div class="timer" id="timer" data-ms="${restanteMs}">--:--</div>
 
-<button onclick="copy()">COPY</button>
+<button onclick="copy()">COPY KEY</button>
 
-<p style="opacity:0.4;font-size:0.7rem;margin-top:10px;">
+<div class="info">
 IP: ${userIp}<br>
 Expires in ${expiresMin} min
-</p>
+</div>
 
 </div>
 
+<div class="toast" id="toast">Copied</div>
+
 <script>
+
+/* COPY */
 function copy(){
     navigator.clipboard.writeText(document.getElementById('key').innerText);
+    showToast("Key copied");
 }
 
+/* TOAST */
+function showToast(msg){
+    const t=document.getElementById('toast');
+    t.innerText=msg;
+    t.classList.add('show');
+    setTimeout(()=>t.classList.remove('show'),2000);
+}
+
+/* TIMER */
 function update(){
     const el=document.getElementById('timer');
     let ms=parseInt(el.dataset.ms);
@@ -491,15 +590,41 @@ function update(){
     ms-=1000;
     el.dataset.ms=ms;
 
-    const m=Math.floor(ms/60000);
+    const h=Math.floor(ms/3600000);
+    const m=Math.floor((ms%3600000)/60000);
     const s=Math.floor((ms%60000)/1000);
 
     el.innerText=
+        h.toString().padStart(2,'0')+":"+
         m.toString().padStart(2,'0')+":"+
         s.toString().padStart(2,'0');
 }
 setInterval(update,1000);
 update();
+
+/* PARTICLES */
+const c=document.getElementById('bg');
+const ctx=c.getContext('2d');
+c.width=innerWidth;
+c.height=innerHeight;
+
+let p=[];
+for(let i=0;i<70;i++){
+    p.push({x:Math.random()*c.width,y:Math.random()*c.height,v:Math.random()*0.6});
+}
+
+function draw(){
+    ctx.clearRect(0,0,c.width,c.height);
+    ctx.fillStyle='rgba(255,51,51,0.2)';
+    p.forEach(e=>{
+        e.y+=e.v;
+        if(e.y>c.height)e.y=0;
+        ctx.fillRect(e.x,e.y,2,2);
+    });
+    requestAnimationFrame(draw);
+}
+draw();
+
 </script>
 
 </body>
