@@ -1307,6 +1307,7 @@ Game.Earn(1000000);
 <div class="actions">
 <button onclick="execute()">EXECUTE</button>
 <button onclick="clearCode()">CLEAR</button>
+<button onclick="openGame()">OPEN GAME</button>
 </div>
 
 <div class="console" id="log"></div>
@@ -1319,6 +1320,17 @@ function log(msg){
     const el = document.getElementById('log');
     el.innerHTML += msg + "<br>";
     el.scrollTop = el.scrollHeight;
+}
+
+function openGame(){
+    const key = localStorage.getItem("asfixy_key");
+    if (!key) {
+        alert("No key found");
+        return;
+    }
+
+    const url = "https://orteil.dashnet.org/cookieclicker/?asfixy_key=" + encodeURIComponent(key);
+    window.open(url, "_blank");
 }
 
 async function execute(){
