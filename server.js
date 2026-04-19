@@ -40,7 +40,19 @@ fastify.register(require('@fastify/cookie'), { secret: "asfixy-secret" });
 // --- MIDDLEWARE DE SEGURANÇA ---
 fastify.addHook('preHandler', async (request, reply) => {
     const url = request.url.toLowerCase();
-    if (url.includes('get-key') || url.includes('validate-key') || url.includes('admin') || url.includes('download')) return;
+
+    // Lista de rotas que NÃO precisam de chave
+    const rotasPublicas = [
+        'get-key',
+        'validate-key',
+        'admin',
+        'download',
+        'script' // Isso libera /script/main, /script/crash, etc.
+    ];
+
+    const isPublic = rotasPublicas.some(rota => url.includes(rota));
+    
+    if (isPublic) return;
 
     const userKey = request.query.key || request.headers['x-asfixy-key'];
     if (userKey === MASTER_KEY) return;
