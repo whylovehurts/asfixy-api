@@ -396,7 +396,7 @@ fastify.get('/admin', async (request, reply) => {
             }
 
             function changePage(p) {
-                window.location.href = `/admin?key=${MASTER_KEY}&page=` + p;
+                window.location.href = '/admin?key=${MASTER_KEY}&page=' + p;
             }
 
             async function bulkCreate() {
