@@ -18,6 +18,15 @@ function formatTimeServer(ms) {
     return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`;
 }
 
+function escapeHtml(str = "") {
+    return str
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+}
+
 mongoose.connect(MONGO_URI).then(() => console.log("💉 Abyss Connection Active"));
 
 // --- SCHEMAS ---
@@ -48,21 +57,28 @@ fastify.register(require('@fastify/cors'), { origin: true });
 
 // --- IP LOCK RIGOROSO (Middleware) ---
 fastify.addHook('preHandler', async (request, reply) => {
-    const path = request.routerPath || request.url.toLowerCase();
-    const publicPaths = ['/', '/get-key', '/redeem', '/admin', '/download', '/script/'];
-    if (publicPaths.some(p => path.includes(p))) return;
+    try {
+        const path = (request.routerPath || request.url || "").toLowerCase();
+        const publicPaths = ['/', '/get-key', '/redeem', '/redeem-key', '/admin', '/download', '/script/'];
+        if (publicPaths.some(p => path.startsWith(p))) return;
 
-    const userKey = request.query.key || request.headers['x-asfixy-key'];
-    if (userKey === MASTER_KEY) return;
+        const userKey = request.query?.key || request.headers['x-asfixy-key'];
+        if (!userKey) return reply.code(401).send({ error: "Missing Key" });
 
-    const keyDoc = await KeyModel.findOne({ key: userKey });
-    if (!keyDoc) return reply.code(401).send({ error: "Invalid Key" });
+        if (userKey === MASTER_KEY) return;
 
-    // Se o IP for MANUAL, a key ainda não foi ativada pelo /redeem-key
-    if (keyDoc.ip === "MANUAL") return reply.code(403).send({ error: "Redeem key first" });
-    
-    // Trava de IP: O IP atual deve ser o mesmo que resgatou a key
-    if (keyDoc.ip !== request.ip) return reply.code(401).send({ error: "IP Hardware Lock mismatch" });
+        const keyDoc = await KeyModel.findOne({ key: userKey }).lean();
+        if (!keyDoc) return reply.code(401).send({ error: "Invalid Key" });
+
+        if (keyDoc.ip === "MANUAL")
+            return reply.code(403).send({ error: "Redeem key first" });
+
+        if (keyDoc.ip !== request.ip)
+            return reply.code(401).send({ error: "IP mismatch" });
+
+    } catch {
+        return reply.code(500).send({ error: "Auth failure" });
+    }
 });
 
 // --- ADMIN PANEL (PAGINATION & UI) ---
@@ -116,7 +132,10 @@ fastify.get('/admin', async (request, reply) => {
                 <tbody>
                     ${keysData.map(item => `
                     <tr>
-                        <td><span class="key-name">${item.key}</span><br><small style="opacity:0.4;font-family:monospace;">${item.ip}</small></td>
+                        <td>
+                            <span class="key-name">${escapeHtml(item.key)}</span><br>
+                            <small style="opacity: 0.5; font-family: monospace;">${escapeHtml(item.ip)}</small>
+                        </td>
                         <td class="timer" data-ms="${item.timeLeft}">${item.isPermanent ? '<span style="color:var(--success)">PERMANENT</span>' : formatTimeServer(item.timeLeft)}</td>
                         <td class="actions">
                             <button class="btn-opt" style="color:var(--success)" onclick="resetIP('${item.key}')">RESET IP</button>
@@ -188,12 +207,24 @@ fastify.get('/admin', async (request, reply) => {
 // --- ADMIN ACTIONS ---
 fastify.post('/admin/bulk-create', async (r, rp) => {
     if (r.query.key !== MASTER_KEY) return rp.code(403).send();
+
+    const amount = Math.min(100, Math.max(1, parseInt(r.body.amount) || 1));
+
     const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
     const keys = [];
-    for (let i = 0; i < r.body.amount; i++) {
-        let rand = ""; for (let j = 0; j < 23; j++) rand += chars.charAt(Math.floor(Math.random() * chars.length));
-        keys.push({ key: `Asfixy-${rand}`, isPermanent: r.body.permanent, ip: "MANUAL" });
+
+    for (let i = 0; i < amount; i++) {
+        let rand = "";
+        for (let j = 0; j < 23; j++)
+            rand += chars[Math.floor(Math.random() * chars.length)];
+
+        keys.push({
+            key: `Asfixy-${rand}`,
+            isPermanent: !!r.body.permanent,
+            ip: "MANUAL"
+        });
     }
+
     await KeyModel.insertMany(keys);
     return { success: true };
 });
@@ -206,9 +237,23 @@ fastify.post('/admin/reset-ip', async (r, rp) => {
 
 fastify.post('/admin/edit-full', async (r, rp) => {
     if (r.query.key !== MASTER_KEY) return rp.code(403).send();
-    const update = { key: r.body.newName };
-    if (r.body.hours > 0) update.createdAt = new Date(Date.now() - (DURACAO_KEY - (r.body.hours * 3600000)));
-    await KeyModel.updateOne({ key: r.body.targetKey }, update);
+
+    const { targetKey, newName, hours } = r.body;
+
+    if (!targetKey) return rp.code(400).send();
+
+    const update = {};
+
+    if (newName && newName.length <= 50)
+        update.key = newName;
+
+    const h = parseInt(hours);
+    if (!isNaN(h) && h > 0) {
+        update.createdAt = new Date(Date.now() - (DURACAO_KEY - (h * 3600000)));
+    }
+
+    await KeyModel.updateOne({ key: targetKey }, update);
+
     return { success: true };
 });
 
@@ -220,7 +265,17 @@ fastify.post('/admin/revoke-key', async (r, rp) => {
 
 fastify.post('/admin/create-key', async (r, rp) => {
     if (r.query.key !== MASTER_KEY) return rp.code(403).send();
-    await KeyModel.create({ ip: "MANUAL", key: r.body.customName, isPermanent: r.body.permanent });
+
+    const name = String(r.body.customName || "").trim();
+    if (!name || name.length > 50)
+        return rp.code(400).send({ error: "Invalid name" });
+
+    await KeyModel.create({
+        ip: "MANUAL",
+        key: name,
+        isPermanent: !!r.body.permanent
+    });
+
     return { success: true };
 });
 
@@ -262,7 +317,12 @@ fastify.get('/redeem', async (request, reply) => {
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ key })
                     });
-                    const data = await res.json();
+                    let data;
+                    try {
+                        data = await res.json();
+                    } catch {
+                        throw new Error("Invalid response");
+                    }
                     if (data.valid) {
                         status.style.color = "#33ff77";
                         status.innerText = "SUCCESS: " + (data.msg || "Device Authorized");
@@ -280,25 +340,29 @@ fastify.get('/redeem', async (request, reply) => {
 
 // --- PUBLIC ROUTES (NO KEY REQUIRED FOR REDEEM) ---
 fastify.post('/redeem-key', async (request, reply) => {
-    const { key } = request.body;
-    const userIp = request.ip; // Captura o IP real devido ao trustProxy
+    try {
+        const key = String(request.body?.key || "").trim();
+        const userIp = request.ip;
 
-    if (!key) return reply.code(400).send({ valid: false, reason: "Key is required" });
+        if (!key)
+            return reply.code(400).send({ valid: false, reason: "Key required" });
 
-    const keyDoc = await KeyModel.findOne({ key });
-    if (!keyDoc) return { valid: false, reason: "Key not found in database" };
+        const keyDoc = await KeyModel.findOne({ key });
+        if (!keyDoc)
+            return { valid: false, reason: "Not found" };
 
-    // Se for MANUAL, vincula ao IP de quem está acessando agora
-    if (keyDoc.ip === "MANUAL") {
-        await KeyModel.updateOne({ key }, { ip: userIp });
-        return { valid: true, msg: `Key locked to IP: ${userIp}` };
-    }
+        if (keyDoc.ip === "MANUAL") {
+            await KeyModel.updateOne({ key }, { ip: userIp });
+            return { valid: true, msg: "Activated" };
+        }
 
-    // Se já estiver vinculada, checa se o IP bate
-    if (keyDoc.ip === userIp) {
-        return { valid: true, msg: "Device already authorized" };
-    } else {
-        return { valid: false, reason: "This key is already locked to another device/IP" };
+        if (keyDoc.ip === userIp)
+            return { valid: true, msg: "Already active" };
+
+        return { valid: false, reason: "Locked to another IP" };
+
+    } catch {
+        return reply.code(500).send({ valid: false });
     }
 });
 
@@ -528,6 +592,149 @@ draw();
 </body>
 </html>
 `;
+
+fastify.get('/get-key', async (request, reply) => {
+    const userIp = request.ip;
+
+    let keyDoc = await KeyModel.findOne({ ip: userIp });
+    let isNew = false;
+
+    if (!keyDoc) {
+        const chars = "123579";
+        let rand = "";
+        for (let i = 0; i < 6; i++) {
+            rand += chars[Math.floor(Math.random() * chars.length)];
+        }
+
+        keyDoc = await KeyModel.create({
+            ip: userIp,
+            key: `Asfixy-${rand}`
+        });
+
+        isNew = true;
+    }
+
+    const restanteMs = Math.max(0, DURACAO_KEY - (Date.now() - keyDoc.createdAt.getTime()));
+    const expiresMin = Math.max(0, Math.round(restanteMs / 60000));
+
+    const html = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Asfixy Key</title>
+
+<style>
+:root {
+    --bg:#050505;
+    --card:#141414;
+    --accent:#ff3333;
+    --text:#eaeaea;
+    --success:#33ff77;
+}
+body{
+    background:var(--bg);
+    color:var(--text);
+    display:flex;
+    justify-content:center;
+    align-items:center;
+    height:100vh;
+    font-family:sans-serif;
+}
+.box{
+    background:var(--card);
+    padding:30px;
+    border-radius:20px;
+    text-align:center;
+    width:90%;
+    max-width:400px;
+}
+.key{
+    margin:20px 0;
+    font-size:1.5rem;
+    color:var(--accent);
+    cursor:pointer;
+}
+.badge{
+    font-size:0.7rem;
+    padding:5px 10px;
+    border-radius:20px;
+    display:inline-block;
+}
+.new{background:var(--success);color:#000;}
+.old{background:#222;}
+.timer{
+    margin-top:10px;
+    color:var(--accent);
+}
+button{
+    margin-top:15px;
+    padding:10px;
+    width:100%;
+    border:none;
+    border-radius:10px;
+    background:var(--accent);
+    color:#fff;
+    cursor:pointer;
+}
+</style>
+</head>
+
+<body>
+
+<div class="box">
+
+${isNew 
+    ? '<div class="badge new">NEW KEY</div>' 
+    : '<div class="badge old">ACTIVE SESSION</div>'}
+
+<h2>ASFIXY KEY</h2>
+
+<div class="key" id="key">${keyDoc.key}</div>
+
+<div class="timer" id="timer" data-ms="${restanteMs}">--:--</div>
+
+<button onclick="copy()">COPY</button>
+
+<p style="opacity:0.4;font-size:0.7rem;margin-top:10px;">
+IP: ${userIp}<br>
+Expires in ${expiresMin} min
+</p>
+
+</div>
+
+<script>
+function copy(){
+    navigator.clipboard.writeText(document.getElementById('key').innerText);
+}
+
+function update(){
+    const el=document.getElementById('timer');
+    let ms=parseInt(el.dataset.ms);
+
+    if(ms<=0){el.innerText="EXPIRED";return;}
+
+    ms-=1000;
+    el.dataset.ms=ms;
+
+    const m=Math.floor(ms/60000);
+    const s=Math.floor((ms%60000)/1000);
+
+    el.innerText=
+        m.toString().padStart(2,'0')+":"+
+        s.toString().padStart(2,'0');
+}
+setInterval(update,1000);
+update();
+</script>
+
+</body>
+</html>
+`;
+
+    reply.type('text/html').send(html);
+});
 
 // --- DATA ROUTES ---
 fastify.get('/status', async (request, reply) => {
