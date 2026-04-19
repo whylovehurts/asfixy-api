@@ -4,9 +4,8 @@ const fs = require('fs');
 const path = require('path');
 
 const MONGO_URI = process.env.MONGO_URI;
-
+const MASTER_KEY = processs.env.DEV_KEY;
 const DURACAO_KEY = 12 * 60 * 60 * 1000; // 12 Horas
-const MASTER_KEY = "Asfixy-@xxl.medeiros";
 
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log("💉 Conexão com o Abismo estabelecida."))
@@ -39,27 +38,36 @@ fastify.register(require('@fastify/cookie'), { secret: "asfixy-secret" });
 
 // --- MIDDLEWARE DE SEGURANÇA ---
 fastify.addHook('preHandler', async (request, reply) => {
-    const url = request.url.toLowerCase();
+    // Pegamos o caminho limpo da URL (ex: /download ou /script/main)
+    const path = request.routerPath || request.url.toLowerCase();
 
-    // Lista de rotas que NÃO precisam de chave
+    // Lista de rotas que são 100% PÚBLICAS
     const rotasPublicas = [
-        'get-key',
-        'validate-key',
-        'admin',
-        'download',
-        'script' // Isso libera /script/main, /script/crash, etc.
+        '/get-key',
+        '/validate-key',
+        '/admin',
+        '/download',
+        '/script/:file' // Libera a rota dinâmica de scripts
     ];
 
-    const isPublic = rotasPublicas.some(rota => url.includes(rota));
-    
-    if (isPublic) return;
+    // Se a rota atual estiver na lista de públicas, ignora a validação de key
+    if (rotasPublicas.some(route => path.includes(route.split(':')[0]))) {
+        return;
+    }
 
+    // Se não for pública, valida a Key
     const userKey = request.query.key || request.headers['x-asfixy-key'];
+    
+    // Master Key sempre tem acesso
     if (userKey === MASTER_KEY) return;
 
     const keyDoc = await KeyModel.findOne({ ip: request.ip, key: userKey });
+    
     if (!keyDoc) {
-        return reply.code(401).send({ error: "Unauthorized", message: "Key inválida ou expirada." });
+        return reply.code(401).send({ 
+            error: "Unauthorized", 
+            message: "Key inválida ou expirada." 
+        });
     }
 });
 
