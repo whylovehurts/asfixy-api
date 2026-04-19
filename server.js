@@ -150,81 +150,201 @@ fastify.get('/admin', async (request, reply) => {
     const userKey = request.query.key;
     if (userKey !== MASTER_KEY) return reply.code(403).send("ACCESS DENIED");
 
-    function formatTimeInternal(ms) {
-        if (ms < 0) return "INFINITY";
-        let totalSecs = Math.floor(ms / 1000);
-        let h = Math.floor(totalSecs / 3600);
-        let m = Math.floor((totalSecs % 3600) / 60);
-        let s = totalSecs % 60;
-        return h.toString().padStart(2, '0') + ":" + m.toString().padStart(2, '0') + ":" + s.toString().padStart(2, '0');
-    }
-
     const allKeys = await KeyModel.find({});
     const keysData = allKeys.map(k => {
         const ms = DURACAO_KEY - (Date.now() - k.createdAt.getTime());
-        return { key: k.key, isPermanent: k.isPermanent, timeLeft: k.isPermanent ? -1 : Math.max(0, ms) };
+        return { 
+            key: k.key, 
+            isPermanent: k.isPermanent,
+            timeLeft: k.isPermanent ? -1 : Math.max(0, ms) 
+        };
     });
-    
+
     const html = `
     <!DOCTYPE html>
     <html lang="en">
-    <head><meta charset="UTF-8"><title>Asfixy Admin Panel</title><style>${estilosAdmin} body { background: #1a0304; margin: 0; }</style></head>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Asfixy Master Panel</title>
+        <style>
+            :root {
+                --bg: #0a0a0a;
+                --card-bg: #141414;
+                --accent: #ff3333;
+                --text: #e0e0e0;
+                --success: #33ff77;
+            }
+            body { 
+                background: var(--bg); 
+                color: var(--text); 
+                font-family: 'Inter', 'Segoe UI', system-ui, sans-serif; 
+                margin: 0; 
+                display: flex; 
+                justify-content: center; 
+                align-items: center; 
+                min-height: 100vh;
+            }
+            .container {
+                width: 90%;
+                max-width: 800px;
+                background: var(--card-bg);
+                border: 1px solid rgba(255, 51, 51, 0.1);
+                border-radius: 24px;
+                padding: 40px;
+                box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+            }
+            .header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-bottom: 30px;
+                border-bottom: 1px solid rgba(255,255,255,0.05);
+                padding-bottom: 20px;
+            }
+            .header h1 {
+                font-size: 1.2rem;
+                letter-spacing: 3px;
+                color: var(--accent);
+                margin: 0;
+                text-transform: uppercase;
+            }
+            .btn-main {
+                background: var(--success);
+                color: #000;
+                border: none;
+                padding: 10px 20px;
+                border-radius: 12px;
+                font-weight: bold;
+                cursor: pointer;
+                transition: transform 0.2s;
+            }
+            .btn-main:hover { transform: scale(1.05); }
+            
+            table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+            th { text-align: left; color: rgba(255,255,255,0.4); font-size: 0.8rem; text-transform: uppercase; padding: 15px; }
+            td { padding: 15px; border-bottom: 1px solid rgba(255,255,255,0.03); }
+            
+            .key-name { font-weight: 600; color: #fff; }
+            .permanent-badge { color: var(--success); font-size: 0.8rem; font-weight: bold; }
+            
+            .actions { display: flex; gap: 10px; }
+            .btn-opt {
+                background: rgba(255,255,255,0.05);
+                border: 1px solid rgba(255,255,255,0.1);
+                color: var(--text);
+                padding: 6px 12px;
+                border-radius: 8px;
+                font-size: 0.75rem;
+                cursor: pointer;
+                transition: 0.3s;
+            }
+            .btn-opt:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+            .btn-revoke:hover { background: #ff3366; }
+
+            .footer-info {
+                margin-top: 30px;
+                font-size: 0.8rem;
+                opacity: 0.5;
+                text-align: center;
+            }
+        </style>
+    </head>
     <body>
-        <div id="asfixy-console">
-            <div id="asfixy-goth-header"><span class="goth-title">ASFIXY MASTER PANEL V1.1</span></div>
-            <div id="asfixy-main-content">
-                <div class="admin-actions-grid">
-                    <button class="btn-action btn-create" onclick="criarNovaKey()">+ NEW KEY</button>
-                </div>
-                <div id="asfixy-goth-log">
-                    <table class="admin-table">
-                        <thead><tr><th>Key Name</th><th>Expiration</th><th>Actions</th></tr></thead>
-                        <tbody>
-                            ${keysData.map(item => `
-                            <tr>
-                                <td style="color: #fff; font-weight: bold;">${item.key}</td>
-                                <td class="timer" data-ms="${item.timeLeft}">${item.isPermanent ? '<span class="permanent-label">INFINITY</span>' : formatTimeInternal(item.timeLeft)}</td>
-                                <td><button class="btn-action" onclick="revogarKey('${item.key}')" style="border-color: #ff6b6b; color: #ff6b6b;">Revoke</button></td>
-                            </tr>
-                            `).join('')}
-                        </tbody>
-                    </table>
-                </div>
-                <div id="asfixy-input-area"><span class="input-cursor">></span><div id="asfixy-terminal-input">Monitoring ${keysData.length} active sessions...</div></div>
+        <div class="container">
+            <div class="header">
+                <h1>Asfixy Master</h1>
+                <button class="btn-main" onclick="criarNovaKey()">+ NEW KEY</button>
+            </div>
+
+            <table>
+                <thead>
+                    <tr>
+                        <th>Key Identification</th>
+                        <th>Status / Expiry</th>
+                        <th>Management</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${keysData.map(item => `
+                    <tr>
+                        <td><span class="key-name">${item.key}</span></td>
+                        <td class="timer" data-ms="${item.timeLeft}">
+                            ${item.isPermanent ? '<span class="permanent-badge">PERMANENT</span>' : formatTime(item.timeLeft)}
+                        </td>
+                        <td class="actions">
+                            <button class="btn-opt" onclick="updateKey('${item.key}')">EDIT</button>
+                            <button class="btn-opt btn-revoke" onclick="revogarKey('${item.key}')">REVOKE</button>
+                        </td>
+                    </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+
+            <div class="footer-info">
+                Active Connections: ${keysData.length} | System Latency: Optimal
             </div>
         </div>
+
         <script>
             function formatTime(ms) {
-                if (ms < 0) return "INFINITY";
+                if (ms < 0) return "PERMANENT";
                 let totalSecs = Math.floor(ms / 1000);
                 let h = Math.floor(totalSecs / 3600);
                 let m = Math.floor((totalSecs % 3600) / 60);
                 let s = totalSecs % 60;
                 return h.toString().padStart(2, '0') + ":" + m.toString().padStart(2, '0') + ":" + s.toString().padStart(2, '0');
             }
-            function copyLoader(tipo) {
-                const loader = "let Script = \\"" + tipo + "\\";\\nlet UserKey = \\"YOUR_KEY_HERE\\";\\nwindow.load = (u) => window.fetch(u).then(r => r.text()).then(eval);\\nload('https://' + window.location.host + '/script/' + Script + '?key=' + UserKey);";
-                navigator.clipboard.writeText(loader);
-                document.getElementById('asfixy-terminal-input').innerText = "LOADER [" + tipo.toUpperCase() + "] COPIED!";
-                setTimeout(() => { location.reload(); }, 1500);
-            }
+
             async function criarNovaKey() {
-                const name = prompt("Custom Key Name:");
+                const name = prompt("Enter Custom Key Name:");
                 if(!name) return;
-                const perm = confirm("Should this key be PERMANENT?");
-                await fetch('/admin/create-key?key=${MASTER_KEY}', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ customName: name, permanent: perm }) });
+                const perm = confirm("Make this key permanent?");
+                await fetch('/admin/create-key?key=${MASTER_KEY}', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ customName: name, permanent: perm })
+                });
                 location.reload();
             }
-            async function revogarKey(keyName) {
-                if(confirm("Revoke key: " + keyName + "?")) {
-                    await fetch('/admin/revoke-key?key=${MASTER_KEY}', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ targetKey: keyName }) });
+
+            async function updateKey(oldKey) {
+                const newName = prompt("New name for this key (Leave blank to keep current):", oldKey);
+                const newHours = prompt("Add/Set hours (e.g., 12 or 24). Enter 0 to keep current duration:");
+                
+                if (newName !== null) {
+                    await fetch('/admin/edit-full?key=${MASTER_KEY}', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ 
+                            targetKey: oldKey, 
+                            newName: newName || oldKey, 
+                            hours: newHours || 0 
+                        })
+                    });
                     location.reload();
                 }
             }
+
+            async function revogarKey(keyName) {
+                if(confirm("Permanently revoke " + keyName + "?")) {
+                    await fetch('/admin/revoke-key?key=${MASTER_KEY}', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ targetKey: keyName })
+                    });
+                    location.reload();
+                }
+            }
+
             setInterval(() => {
                 document.querySelectorAll('.timer').forEach(td => {
                     let ms = parseInt(td.getAttribute('data-ms'));
-                    if (ms > 0) { ms -= 1000; td.setAttribute('data-ms', ms); td.innerText = formatTime(ms); }
+                    if (ms > 0) {
+                        ms -= 1000;
+                        td.setAttribute('data-ms', ms);
+                        td.innerText = formatTime(ms);
+                    }
                 });
             }, 1000);
         </script>
@@ -240,6 +360,21 @@ fastify.post('/admin/create-key', async (request, reply) => {
         await KeyModel.create({ ip: "MANUAL", key: customName, isPermanent: permanent, createdAt: new Date() });
         return { success: true };
     } catch (err) { return reply.code(400).send({ error: "Key already exists." }); }
+});
+
+fastify.post('/admin/edit-full', async (request, reply) => {
+    if (request.query.key !== MASTER_KEY) return reply.code(403).send();
+    const { targetKey, newName, hours } = request.body;
+    
+    const updateData = { key: newName };
+    
+    if (hours && parseFloat(hours) > 0) {
+        // Define a nova data de expiração baseada no tempo atual + horas pedidas
+        updateData.createdAt = new Date(Date.now() - (DURACAO_KEY - (parseFloat(hours) * 60 * 60 * 1000)));
+    }
+
+    await KeyModel.updateOne({ key: targetKey }, updateData);
+    return { success: true };
 });
 
 fastify.post('/admin/revoke-key', async (request, reply) => {
