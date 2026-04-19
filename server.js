@@ -443,7 +443,7 @@ fastify.post('/redeem-key', {
         let key = String(request.body?.key || "").trim();
 
         // sanitização básica
-        key = key.replace(/[^a-zA-Z0-9\-]/g, "");
+        key = key.toLowerCase().trim();
 
         const userIp =
             request.headers['x-forwarded-for']?.split(',')[0] || request.ip;
@@ -454,7 +454,9 @@ fastify.post('/redeem-key', {
                 reason: "Key required"
             });
 
-        const keyDoc = await KeyModel.findOne({ key });
+        const keyDoc = await KeyModel.findOne({
+            key: new RegExp(`^${key}$`, "i")
+        });
 
         if (!keyDoc)
             return { valid: false, reason: "Invalid key" };
@@ -518,7 +520,7 @@ fastify.get('/get-key', async (request, reply) => {
 
             keyDoc = await KeyModel.create({
                 ip: userIp,
-                key: `Asfixy-${rand}`
+                key: `Asfixy-${rand}`.toLowerCase()
             });
 
             isNew = true;
