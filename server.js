@@ -12,10 +12,18 @@ mongoose.connect(process.env.MONGO_URI)
   .catch(err => console.error("❌ Erro no MongoDB:", err));
 
 const KeySchema = new mongoose.Schema({
-    ip: { type: String, required: true, unique: true },
-    key: { type: String, required: true },
-    createdAt: { type: Date, default: Date.now, expires: 43200 } // Auto-deleta após 12h
+    ip: { type: String, default: "MANUAL" }, // IPs manuais não precisam de validação de rede
+    key: { type: String, required: true, unique: true },
+    isPermanent: { type: Boolean, default: false },
+    createdAt: { type: Date, default: Date.now }
 });
+
+KeySchema.index({ createdAt: 1 }, { 
+    expireAfterSeconds: 43200, 
+    partialFilterExpression: { isPermanent: false } 
+});
+
+const KeyModel = mongoose.model('Key', KeySchema);
 
 const FarmSchema = new mongoose.Schema({
     ownerKey: { type: String, required: true },
@@ -231,12 +239,11 @@ fastify.get('/admin', async (request, reply) => {
     const allKeys = await KeyModel.find({});
     const keysData = allKeys.map(k => {
         const ms = DURACAO_KEY - (Date.now() - k.createdAt.getTime());
-        const partesIp = k.ip.split('.');
         return { 
             id: k.ip, 
-            displayIp: partesIp.length === 4 ? `XXX.XXX.X.${partesIp[3]}` : `UNKNOWN`, 
             key: k.key, 
-            timeLeft: Math.max(0, ms) 
+            isPermanent: k.isPermanent,
+            timeLeft: k.isPermanent ? -1 : Math.max(0, ms) 
         };
     });
     
@@ -246,54 +253,80 @@ fastify.get('/admin', async (request, reply) => {
     <head>
         <meta charset="UTF-8">
         <title>Asfixy Admin Engine</title>
-        <style>${estilosAdmin} body { background: #1a0304; margin: 0; }</style>
+        <style>
+            ${estilosAdmin}
+            .btn-create { background: #33ff77 !important; color: #000 !important; margin-bottom: 10px; width: 100%; border-radius: 15px !important; }
+            .permanent-label { color: #33ff77; font-weight: bold; text-shadow: 0 0 5px #33ff77; }
+        </style>
     </head>
     <body>
         <div id="asfixy-console">
             <div id="asfixy-goth-header">
-                <span class="goth-title">ASFIXY ADMIN ENGINE V1.0.1</span>
-                <span class="goth-title" style="font-size: 9px; opacity: 0.5;">MASTER_MODE</span>
+                <span class="goth-title">ASFIXY MASTER PANEL</span>
+                <button class="btn-action btn-create" onclick="criarNovaKey()">+ CREATE NEW KEY</button>
             </div>
             <div id="asfixy-main-content">
                 <div id="asfixy-goth-log">
                     <table class="admin-table">
                         <thead>
                             <tr>
-                                <th>IP (Censored)</th>
-                                <th>Key</th>
-                                <th>Expiring In</th>
+                                <th>Key Name</th>
+                                <th>Time Status</th>
                                 <th>Actions</th>
                             </tr>
                         </thead>
                         <tbody>
                             ${keysData.map(item => `
                             <tr>
-                                <td>${item.displayIp}</td>
-                                <td style="color: #888;">${item.key}</td>
-                                <td class="timer" data-ms="${item.timeLeft}">${formatTime(item.timeLeft)}</td>
+                                <td style="color: #fff; font-weight: bold;">${item.key}</td>
+                                <td class="timer" data-ms="${item.timeLeft}">
+                                    ${item.isPermanent ? '<span class="permanent-label">INFINITY</span>' : formatTime(item.timeLeft)}
+                                </td>
                                 <td>
-                                    <button class="btn-action" onclick="editarKey('${item.id}')">Edit</button>
-                                    <button class="btn-action" onclick="revogarKey('${item.id}')" style="border-color: #ff6b6b; color: #ff6b6b;">Revoke</button>
+                                    <button class="btn-action" onclick="revogarKey('${item.key}')">Revoke</button>
                                 </td>
                             </tr>
                             `).join('')}
                         </tbody>
                     </table>
                 </div>
-                <div id="asfixy-input-area">
-                    <span class="input-cursor">></span>
-                    <div id="asfixy-terminal-input">System monitoring: ${keysData.length} active sessions...</div>
-                </div>
             </div>
         </div>
         <script>
             function formatTime(ms) {
+                if (ms < 0) return "INFINITY";
                 let totalSecs = Math.floor(ms / 1000);
                 let h = Math.floor(totalSecs / 3600);
                 let m = Math.floor((totalSecs % 3600) / 60);
                 let s = totalSecs % 60;
                 return h.toString().padStart(2, '0') + ":" + m.toString().padStart(2, '0') + ":" + s.toString().padStart(2, '0');
             }
+
+            async function criarNovaKey() {
+                const name = prompt("Nome da Key Personalizada:");
+                if(!name) return;
+                const perm = confirm("Deseja que esta chave seja PERMANENTE?");
+                
+                await fetch('/admin/create-key?key=${MASTER_KEY}', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ customName: name, permanent: perm })
+                });
+                location.reload();
+            }
+
+            async function revogarKey(keyName) {
+                if(confirm("Deletar a chave " + keyName + "?")) {
+                    // Ajustamos para deletar por KEY e não por IP nas chaves manuais
+                    await fetch('/admin/revoke-key?key=${MASTER_KEY}', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ targetKey: keyName })
+                    });
+                    location.reload();
+                }
+            }
+
             setInterval(() => {
                 document.querySelectorAll('.timer').forEach(td => {
                     let ms = parseInt(td.getAttribute('data-ms'));
@@ -301,32 +334,9 @@ fastify.get('/admin', async (request, reply) => {
                         ms -= 1000;
                         td.setAttribute('data-ms', ms);
                         td.innerText = formatTime(ms);
-                    } else {
-                        td.innerText = "EXPIRED";
                     }
                 });
             }, 1000);
-            async function revogarKey(ip) {
-                if(confirm("Banir esta chave?")) {
-                    await fetch('/admin/revoke?key=${MASTER_KEY}', {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({ targetIp: ip })
-                    });
-                    location.reload();
-                }
-            }
-            async function editarKey(ip) {
-                const horas = prompt("Nova duração (horas):");
-                if (horas) {
-                    await fetch('/admin/edit?key=${MASTER_KEY}', {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({ targetIp: ip, hours: horas })
-                    });
-                    location.reload();
-                }
-            }
         </script>
     </body>
     </html>`;
@@ -355,6 +365,23 @@ fastify.post('/admin/edit', async (request, reply) => {
     const novaData = new Date(Date.now() - (DURACAO_KEY - novaDuracaoMs));
     await KeyModel.updateOne({ ip: targetIp }, { createdAt: novaData });
     return { success: true };
+});
+
+fastify.post('/admin/create-key', async (request, reply) => {
+    if (request.query.key !== MASTER_KEY) return reply.code(403).send();
+    const { customName, permanent } = request.body;
+    
+    try {
+        await KeyModel.create({
+            ip: `MANUAL-${Math.floor(Math.random() * 1000)}`,
+            key: customName,
+            isPermanent: permanent,
+            createdAt: new Date()
+        });
+        return { success: true };
+    } catch (err) {
+        return reply.code(400).send({ error: "Nome de chave já existe." });
+    }
 });
 
 // Adicione '/script/:file' na sua lista de exceções do middleware preHandler
