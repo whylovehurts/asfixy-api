@@ -1132,4 +1132,192 @@ draw();
 reply.type('text/html').send(html);
 });
 
+let ENGINE_STATE = {
+    code: "",
+    updatedAt: 0
+};
+
+// recebe código do site
+fastify.post('/engine/execute', async (req, reply) => {
+    const code = String(req.body?.code || "");
+    if (!code) return reply.code(400).send();
+
+    ENGINE_STATE.code = code;
+    ENGINE_STATE.updatedAt = Date.now();
+
+    return { ok: true };
+});
+
+// extensão puxa código
+fastify.get('/engine/pull', async (req, reply) => {
+    return ENGINE_STATE;
+});
+
+fastify.get('/engine', async (req, reply) => {
+
+const html = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Asfixy Engine</title>
+
+<style>
+:root{
+--bg:#050505;
+--card:#111;
+--accent:#ff3333;
+--text:#eaeaea;
+}
+
+*{margin:0;padding:0;box-sizing:border-box;font-family:monospace;}
+
+body{
+background:radial-gradient(circle at top,#0a0a0a,#050505);
+color:var(--text);
+height:100vh;
+display:flex;
+flex-direction:column;
+}
+
+/* HEADER */
+.header{
+padding:15px 20px;
+background:#000;
+border-bottom:1px solid rgba(255,255,255,0.05);
+display:flex;
+justify-content:space-between;
+align-items:center;
+}
+
+.title{
+color:var(--accent);
+letter-spacing:3px;
+}
+
+.status{
+font-size:0.7rem;
+color:#33ff77;
+}
+
+/* EDITOR */
+.editor{
+flex:1;
+display:flex;
+flex-direction:column;
+padding:15px;
+}
+
+textarea{
+flex:1;
+background:#0a0a0a;
+border:1px solid rgba(255,255,255,0.05);
+color:#fff;
+padding:15px;
+border-radius:12px;
+resize:none;
+font-size:13px;
+outline:none;
+}
+
+/* ACTIONS */
+.actions{
+display:flex;
+gap:10px;
+margin-top:10px;
+}
+
+button{
+flex:1;
+padding:12px;
+border:none;
+border-radius:12px;
+background:var(--accent);
+color:#fff;
+cursor:pointer;
+font-weight:bold;
+transition:.2s;
+}
+
+button:hover{
+transform:scale(1.03);
+box-shadow:0 0 15px rgba(255,51,51,0.4);
+}
+
+/* CONSOLE */
+.console{
+height:120px;
+background:#000;
+margin-top:10px;
+border-radius:12px;
+padding:10px;
+font-size:11px;
+overflow:auto;
+opacity:0.7;
+}
+
+</style>
+</head>
+
+<body>
+
+<div class="header">
+<div class="title">ASFIXY ENGINE</div>
+<div class="status">● CONNECTED</div>
+</div>
+
+<div class="editor">
+
+<textarea id="code">
+// Example:
+Game.Earn(1000000);
+</textarea>
+
+<div class="actions">
+<button onclick="execute()">EXECUTE</button>
+<button onclick="clearCode()">CLEAR</button>
+</div>
+
+<div class="console" id="log"></div>
+
+</div>
+
+<script>
+
+function log(msg){
+    const el = document.getElementById('log');
+    el.innerHTML += msg + "<br>";
+    el.scrollTop = el.scrollHeight;
+}
+
+async function execute(){
+    const code = document.getElementById('code').value;
+
+    const res = await fetch('/engine/execute', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({code})
+    });
+
+    if(res.ok){
+        log("> sent to engine");
+    }else{
+        log("> error");
+    }
+}
+
+function clearCode(){
+    document.getElementById('code').value = "";
+}
+
+</script>
+
+</body>
+</html>
+`;
+
+reply.type('text/html').send(html);
+});
+
 fastify.listen({ port: process.env.PORT || 3000, host: '0.0.0.0' });
