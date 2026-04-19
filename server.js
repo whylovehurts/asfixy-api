@@ -59,7 +59,15 @@ fastify.register(require('@fastify/cors'), { origin: true });
 fastify.addHook('preHandler', async (request, reply) => {
     try {
         const path = (request.routerPath || request.url || "").toLowerCase();
-        const publicPaths = ['/get-key', '/redeem', '/redeem-key', '/admin', '/download', '/script/'];
+        const publicPaths = [
+            '/get-key',
+            '/redeem',
+            '/redeem-key',
+            '/admin',
+            '/download',
+            '/script/',
+            '/engine' // <-- adiciona isso
+        ];
         if (path === '/' || publicPaths.some(p => path.startsWith(p))) return;
 
         const userKey = request.query?.key || request.headers['x-asfixy-key'];
@@ -625,6 +633,8 @@ function draw(){
 }
 draw();
 
+localStorage.setItem("asfixy_key", document.getElementById("key").innerText);
+
 </script>
 
 </body>
@@ -1132,25 +1142,45 @@ draw();
 reply.type('text/html').send(html);
 });
 
-let ENGINE_STATE = {
-    code: "",
-    updatedAt: 0
-};
+let ENGINE_STATE = {};
 
 // recebe código do site
 fastify.post('/engine/execute', async (req, reply) => {
+    const key = req.headers['x-asfixy-key'];
     const code = String(req.body?.code || "");
-    if (!code) return reply.code(400).send();
 
-    ENGINE_STATE.code = code;
-    ENGINE_STATE.updatedAt = Date.now();
+    // valida key
+    if (!key)
+        return reply.code(401).send({ error: "Missing key" });
+
+    const keyDoc = await KeyModel.findOne({ key });
+    if (!keyDoc)
+        return reply.code(403).send({ error: "Invalid key" });
+
+    if (!code)
+        return reply.code(400).send({ error: "No code" });
+
+    ENGINE_STATE[key] = {
+        code,
+        updatedAt: Date.now()
+    };
 
     return { ok: true };
 });
-
 // extensão puxa código
 fastify.get('/engine/pull', async (req, reply) => {
-    return ENGINE_STATE;
+    const key = req.headers['x-asfixy-key'];
+
+    if (!key)
+        return reply.code(401).send({ error: "Missing key" });
+
+    const keyDoc = await KeyModel.findOne({ key });
+    if (!keyDoc)
+        return reply.code(403).send({ error: "Invalid key" });
+
+    return ENGINE_STATE[key] || { code: "", updatedAt: 0 };
+
+    return ENGINE_STATE[key] || { code: "", updatedAt: 0 };
 });
 
 fastify.get('/engine', async (req, reply) => {
@@ -1293,17 +1323,27 @@ function log(msg){
 
 async function execute(){
     const code = document.getElementById('code').value;
+    const key = localStorage.getItem("asfixy_key");
+
+    if(!key){
+        log("> no key found, go to /get-key");
+        return;
+    }
 
     const res = await fetch('/engine/execute', {
         method:'POST',
-        headers:{'Content-Type':'application/json'},
+        headers:{
+            'Content-Type':'application/json',
+            'x-asfixy-key': key
+        },
         body:JSON.stringify({code})
     });
 
     if(res.ok){
         log("> sent to engine");
     }else{
-        log("> error");
+        const t = await res.text();
+        log("> error: " + t);
     }
 }
 
@@ -1319,5 +1359,15 @@ function clearCode(){
 
 reply.type('text/html').send(html);
 });
+
+setInterval(() => {
+    const now = Date.now();
+
+    for (const k in ENGINE_STATE) {
+        if (now - ENGINE_STATE[k].updatedAt > 60000) {
+            delete ENGINE_STATE[k];
+        }
+    }
+}, 30000);
 
 fastify.listen({ port: process.env.PORT || 3000, host: '0.0.0.0' });
