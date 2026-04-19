@@ -102,7 +102,7 @@ fastify.get('/admin', async (request, reply) => {
     <!DOCTYPE html>
     <html lang="en">
     <head>
-        <meta charset="UTF-8"><title>Asfixy Master Panel</title>
+        <meta charset="UTF-8"><title>Keys Control</title>
         <style>
             :root { --bg: #0a0a0a; --card: #141414; --accent: #ff3333; --text: #e0e0e0; --success: #33ff77; }
             body { background: var(--bg); color: var(--text); font-family: 'Inter', sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }
@@ -124,7 +124,7 @@ fastify.get('/admin', async (request, reply) => {
     <body>
         <div class="container">
             <div class="header">
-                <h1>Asfixy Master</h1>
+                <h1>Keys Control</h1>
                 <button class="btn-main" onclick="criarNovaKey()">+ NEW KEY</button>
             </div>
             <table>
@@ -653,7 +653,7 @@ fastify.get('/status', async (request, reply) => {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Asfixy Status</title>
+<title>Saves Storage</title>
 
 <style>
 :root {
@@ -802,7 +802,7 @@ const html = `
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Asfixy Master</title>
+<title>Asfixy</title>
 
 <style>
 :root {
@@ -1010,13 +1010,13 @@ canvas {
 <div class="container">
 
 <div class="header">
-<div class="logo">ASFIXY MASTER</div>
+<div class="logo">HeHeHe</div>
 <div class="status">● ONLINE</div>
 </div>
 
 <div class="hero">
-<h1>Engine <span>Premium</span></h1>
-<p>Secure • Fast • Locked • Advanced System</p>
+<h1>Asfixy <span>Abyss</span></h1>
+<p>Secure • Fast • Locked</p>
 </div>
 
 <div class="stats">
@@ -1038,28 +1038,28 @@ canvas {
 
 <div class="card" onclick="go('/download')">
 <h2>DOWNLOAD</h2>
-<p>Get latest engine build.</p>
+<p>Get latest extension engine build.</p>
 </div>
 
 <div class="card" onclick="go('/get-key')">
 <h2>GET KEY</h2>
-<p>Generate instant key.</p>
+<p>Generate instant acess key.</p>
 </div>
 
 <div class="card" onclick="go('/redeem')">
 <h2>REDEEM</h2>
-<p>Activate your device.</p>
+<p>Activate IP-LOCK for Premium Keys.</p>
 </div>
 
 <div class="card" onclick="copyApi()">
 <h2>API STATUS</h2>
-<p>Copy endpoint.</p>
+<p>Copy url endpoint.</p>
 <button class="btn">COPY</button>
 </div>
 
 <div class="card" onclick="go('https://discord.gg/uSvZ5BJuJ4')">
 <h2>DISCORD</h2>
-<p>Join community.</p>
+<p>Join ur updates server.</p>
 </div>
 
 </div>
