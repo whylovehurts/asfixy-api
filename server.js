@@ -7,6 +7,15 @@ const MONGO_URI = process.env.MONGO_URI;
 const MASTER_KEY = process.env.DEV_KEY; // Fixed typo (processs -> process)
 const DURACAO_KEY = 12 * 60 * 60 * 1000; // 12 Hours
 
+function formatTime(ms) {
+    if (ms < 0) return "INFINITY";
+    let totalSecs = Math.floor(ms / 1000);
+    let h = Math.floor(totalSecs / 3600);
+    let m = Math.floor((totalSecs % 3600) / 60);
+    let s = totalSecs % 60;
+    return h.toString().padStart(2, '0') + ":" + m.toString().padStart(2, '0') + ":" + s.toString().padStart(2, '0');
+}
+
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log("💉 Connection with the Abyss established."))
   .catch(err => console.error("❌ MongoDB Error:", err));
