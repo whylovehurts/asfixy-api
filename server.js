@@ -302,18 +302,99 @@ fastify.post('/redeem-key', async (request, reply) => {
     }
 });
 
-fastify.get('/get-key', async (request) => {
+fastify.get('/get-key', async (request, reply) => {
     const userIp = request.ip;
     let keyDoc = await KeyModel.findOne({ ip: userIp });
-    if (keyDoc) {
-        const restanteMs = DURACAO_KEY - (Date.now() - keyDoc.createdAt.getTime());
-        return { key: keyDoc.key, expires_in_min: Math.round(restanteMs / 60000) };
+    let isNew = false;
+
+    if (!keyDoc) {
+        const chars = "123579";
+        let rand = ""; for(let i=0; i<6; i++) rand += chars[Math.floor(Math.random()*chars.length)];
+        const newKey = `Asfixy-${rand}`;
+        keyDoc = await KeyModel.create({ ip: userIp, key: newKey });
+        isNew = true;
     }
-    const chars = "123579";
-    let rand = ""; for(let i=0; i<6; i++) rand += chars[Math.floor(Math.random()*chars.length)];
-    const newKey = `Asfixy-${rand}`;
-    await KeyModel.create({ ip: userIp, key: newKey });
-    return { key: newKey, status: "created" };
+
+    const restanteMs = DURACAO_KEY - (Date.now() - keyDoc.createdAt.getTime());
+    const expiresMin = Math.round(restanteMs / 60000);
+
+    const html = `
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Asfixy - Get Your Key</title>
+        <style>
+            :root { --bg: #0a0a0a; --card: #141414; --accent: #ff3333; --text: #e0e0e0; --success: #33ff77; }
+            body { background: var(--bg); color: var(--text); font-family: 'Inter', sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }
+            .container { width: 90%; max-width: 450px; background: var(--card); border: 1px solid rgba(255,51,51,0.1); border-radius: 24px; padding: 40px; box-shadow: 0 20px 50px rgba(0,0,0,0.8); text-align: center; }
+            h1 { font-size: 1.2rem; letter-spacing: 3px; color: var(--accent); text-transform: uppercase; margin-bottom: 10px; }
+            .key-display { background: #0a0a0a; border: 1px dashed rgba(255,51,51,0.3); padding: 20px; border-radius: 16px; font-family: 'Consolas', monospace; font-size: 1.4rem; color: #fff; margin: 20px 0; cursor: pointer; transition: 0.3s; position: relative; }
+            .key-display:hover { border-color: var(--accent); background: rgba(255,51,51,0.05); }
+            .key-display:active { transform: scale(0.98); }
+            .badge { font-size: 0.7rem; font-weight: bold; padding: 4px 12px; border-radius: 20px; text-transform: uppercase; margin-bottom: 15px; display: inline-block; }
+            .badge-new { background: var(--success); color: #000; }
+            .badge-active { background: rgba(255,255,255,0.1); color: var(--text); }
+            .info { font-size: 0.8rem; opacity: 0.5; margin-bottom: 20px; }
+            .timer { color: var(--accent); font-weight: bold; }
+            .btn-copy { background: transparent; border: 1px solid var(--accent); color: var(--accent); padding: 10px 20px; border-radius: 12px; cursor: pointer; font-weight: bold; font-size: 0.8rem; transition: 0.3s; }
+            .btn-copy:hover { background: var(--accent); color: #fff; }
+            .copy-msg { font-size: 0.7rem; color: var(--success); margin-top: 10px; display: none; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            ${isNew ? '<span class="badge badge-new">New Key Generated</span>' : '<span class="badge badge-active">Existing Session</span>'}
+            <h1>Access Key</h1>
+            <p class="info">This key is linked to your IP and expires in <span class="timer" id="countdown" data-ms="${restanteMs}">--:--</span></p>
+            
+            <div class="key-display" id="keyContent" onclick="copyKey()">
+                ${keyDoc.key}
+            </div>
+
+            <button class="btn-copy" onclick="copyKey()">COPY KEY</button>
+            <div id="copyMsg" class="copy-msg">Copied to clipboard!</div>
+            
+            <p style="margin-top:30px; font-size:0.7rem; opacity:0.3;">Asfixy Engine V1.1 | ${userIp}</p>
+        </div>
+
+        <script>
+            function copyKey() {
+                const key = document.getElementById('keyContent').innerText.trim();
+                navigator.clipboard.writeText(key);
+                const msg = document.getElementById('copyMsg');
+                msg.style.display = 'block';
+                setTimeout(() => { msg.style.display = 'none'; }, 2000);
+            }
+
+            function updateTimer() {
+                const timerEl = document.getElementById('countdown');
+                let ms = parseInt(timerEl.getAttribute('data-ms'));
+                
+                if (ms <= 0) {
+                    timerEl.innerText = "EXPIRED";
+                    return;
+                }
+
+                ms -= 1000;
+                timerEl.setAttribute('data-ms', ms);
+                
+                const h = Math.floor(ms / 3600000);
+                const m = Math.floor((ms % 3600000) / 60000);
+                const s = Math.floor((ms % 60000) / 1000);
+                
+                timerEl.innerText = 
+                    (h > 0 ? h.toString().padStart(2, '0') + ":" : "") + 
+                    m.toString().padStart(2, '0') + ":" + 
+                    s.toString().padStart(2, '0');
+            }
+
+            setInterval(updateTimer, 1000);
+            updateTimer();
+        </script>
+    </body>
+    </html>`;
+    reply.type('text/html').send(html);
 });
 
 // --- DATA ROUTES ---
