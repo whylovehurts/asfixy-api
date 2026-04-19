@@ -138,10 +138,7 @@ const estilosAdmin = `
     .admin-table td { padding: 10px; border-bottom: 1px solid rgba(255, 0, 0, 0.05); }
     .btn-action { background: rgba(255, 0, 0, 0.1); border: 1px solid #ff3333; color: #ff3333; padding: 4px 8px; border-radius: 10px; cursor: pointer; font-size: 9px; text-transform: uppercase; font-weight: bold; transition: 0.3s; }
     .btn-action:hover { background: #ff3333; color: #fff; box-shadow: 0 0 10px #ff3333; }
-    .admin-actions-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 10px; margin-bottom: 5px; }
     .btn-create { background: #33ff77 !important; color: #000 !important; border-color: #33ff77 !important; }
-    .btn-download { background: rgba(0, 150, 255, 0.1) !important; border-color: #0096ff !important; color: #0096ff !important; }
-    .btn-script { background: rgba(255, 150, 0, 0.1) !important; border-color: #ff9600 !important; color: #ff9600 !important; }
     .permanent-label { color: #33ff77; font-weight: bold; text-shadow: 0 0 5px #33ff77; }
     #asfixy-input-area { display: flex; align-items: center; background: rgba(0, 0, 0, 0.3); padding: 12px 18px; border-radius: 20px; box-shadow: inset 2px 2px 8px rgba(0,0,0,0.5); }
     #asfixy-terminal-input { color: #ff3333; font-family: 'Consolas', monospace; font-size: 12px; letter-spacing: 1px; text-transform: uppercase; text-shadow: 0 0 8px rgba(255, 0, 0, 0.4); }
@@ -178,10 +175,6 @@ fastify.get('/admin', async (request, reply) => {
             <div id="asfixy-main-content">
                 <div class="admin-actions-grid">
                     <button class="btn-action btn-create" onclick="criarNovaKey()">+ NEW KEY</button>
-                    <button class="btn-action btn-download" onclick="window.open('/download', '_blank')">📂 FILES</button>
-                    <button class="btn-action btn-script" onclick="copyLoader('main')">📜 MAIN</button>
-                    <button class="btn-action btn-script" onclick="copyLoader('dataloss')">⚠️ LOSS</button>
-                    <button class="btn-action btn-script" onclick="copyLoader('crash')">💀 CRASH</button>
                 </div>
                 <div id="asfixy-goth-log">
                     <table class="admin-table">
