@@ -102,6 +102,22 @@ fastify.register(require('@fastify/rate-limit'), {
     keyGenerator: (req) => req.ip
 });
 
+const RL = new Map();
+
+function rateLimit(ip, limit, ms) {
+    const now = Date.now();
+    const data = RL.get(ip) || [];
+
+    const fresh = data.filter(t => now - t < ms);
+
+    if (fresh.length >= limit) return false;
+
+    fresh.push(now);
+    RL.set(ip, fresh);
+
+    return true;
+}
+
 // --- IP LOCK RIGOROSO (Middleware) ---
 fastify.addHook('preHandler', async (request, reply) => {
     try {
@@ -128,8 +144,9 @@ fastify.addHook('preHandler', async (request, reply) => {
         const keyDoc = await KeyModel.findOne({ key: userKey }).lean();
         if (!keyDoc) return reply.code(401).send({ error: "Invalid Key" });
 
-        if (keyDoc.ip === "MANUAL")
+        if (keyDoc.ip === "MANUAL" && !keyDoc.isPermanent) {
             return reply.code(403).send({ error: "Redeem key first" });
+        }
 
         if (keyDoc.ip !== request.ip)
             return reply.code(401).send({ error: "IP mismatch" });
@@ -431,120 +448,65 @@ fastify.get('/redeem', async (request, reply) => {
 });
 
 // --- PUBLIC ROUTES (NO KEY REQUIRED FOR REDEEM) ---
-fastify.post('/redeem-key', {
-    config: {
-        rateLimit: {
-            max: 5,
-            timeWindow: '1 minute'
-        }
-    }
-}, async (request, reply) => {
+fastify.post('/redeem-key', async (request, reply) => {
     try {
-        let key = String(request.body?.key || "").trim();
+        const key = String(request.body?.key || "").trim().toLowerCase();
 
-        // sanitização básica
-        key = key.toLowerCase().trim();
+        if (!rateLimit(userIp, 5, 60000)) {
+            return reply.code(429).send({
+                valid: false,
+                reason: "Too many requests"
+            });
+        }
 
         const userIp =
             request.headers['x-forwarded-for']?.split(',')[0] || request.ip;
 
         if (!key)
-            return reply.code(400).send({
+            return reply.code(400).send({ valid: false, reason: "Key required" });
+
+        // rate limit manual forte (anti spam real)
+        const now = Date.now();
+        global.REDEEM_LIMIT = global.REDEEM_LIMIT || {};
+
+        const bucket = global.REDEEM_LIMIT[userIp] || [];
+        const recent = bucket.filter(t => now - t < 60000);
+
+        if (recent.length >= 5) {
+            return reply.code(429).send({
                 valid: false,
-                reason: "Key required"
+                reason: "Too many attempts"
             });
+        }
+
+        recent.push(now);
+        global.REDEEM_LIMIT[userIp] = recent;
 
         const keyDoc = await KeyModel.findOne({
             key: new RegExp(`^${key}$`, "i")
         });
 
         if (!keyDoc)
-            return { valid: false, reason: "Invalid key" };
+            return reply.send({ valid: false, reason: "Invalid key" });
 
-        if (!keyDoc.isPermanent)
-            return {
-                valid: false,
-                reason: "Only permanent keys allowed"
-            };
-
-        if (keyDoc.ip === "MANUAL") {
-            await KeyModel.updateOne(
-                { key },
-                { ip: userIp }
-            );
-
-            return { valid: true, msg: "Activated" };
+        // já bindado
+        if (keyDoc.ip !== "MANUAL" && keyDoc.ip !== userIp) {
+            return reply.send({ valid: false, reason: "Already used" });
         }
 
-        if (keyDoc.ip === userIp)
-            return { valid: true, msg: "Already active" };
+        // ativa IP LOCK (CORRETO)
+        keyDoc.ip = userIp;
+        await keyDoc.save();
 
-        return { valid: false, reason: "Already Used" };
+        return reply.send({
+            valid: true,
+            msg: "Activated",
+            key: keyDoc.key,
+            permanent: keyDoc.isPermanent
+        });
 
     } catch {
         return reply.code(500).send({ valid: false });
-    }
-});
-
-fastify.get('/get-key', async (request, reply) => {
-    const userIp =
-        request.headers['x-forwarded-for']?.split(',')[0] || request.ip;
-
-    try {
-        // verifica se já existe key ativa
-        let existing = await KeyModel.findOne({ ip: userIp });
-
-        if (existing && !existing.isPermanent) {
-            const ms =
-                DURACAO_KEY -
-                (Date.now() - existing.createdAt.getTime());
-
-            if (ms > 0) {
-                return reply.code(429).send({
-                    error: "Wait before generating new key"
-                });
-            }
-        }
-
-        let keyDoc = existing;
-        let isNew = false;
-
-        // gera nova key se não existir ou expirou
-        if (!keyDoc || (existing && !existing.isPermanent)) {
-            const chars = "123579";
-            let rand = "";
-
-            for (let i = 0; i < 6; i++) {
-                rand += chars[Math.floor(Math.random() * chars.length)];
-            }
-
-            keyDoc = await KeyModel.create({
-                ip: userIp,
-                key: `Asfixy-${rand}`.toLowerCase()
-            });
-
-            isNew = true;
-        }
-
-        const restanteMs = Math.max(
-            0,
-            DURACAO_KEY -
-                (Date.now() - keyDoc.createdAt.getTime())
-        );
-
-        const expiresMin = Math.max(
-            0,
-            Math.round(restanteMs / 60000)
-        );
-
-        return reply.type('application/json').send({
-            key: keyDoc.key,
-            new: isNew,
-            expiresInMin: expiresMin
-        });
-
-    } catch (e) {
-        return reply.code(500).send({ error: "Internal error" });
     }
 
     const html = `
