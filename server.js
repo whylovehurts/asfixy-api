@@ -1333,19 +1333,29 @@ function openGame(){
     window.open(url, "_blank");
 }
 
-function inject(code){
-    try{
-        const script = document.createElement("script");
+async function execute(){
+    const code = document.getElementById('code').value;
+    const key = localStorage.getItem("asfixy_key");
 
-        script.textContent =
-            "try{(function(){\n" +
-            code +
-            "\n})();}catch(e){console.log('[ASFIXY EXEC ERROR]', e);}";
+    if(!key){
+        log("> no key found, go to /get-key");
+        return;
+    }
 
-        document.documentElement.appendChild(script);
-        script.remove();
-    }catch(e){
-        console.log("[ASFIXY] inject fail", e);
+    const res = await fetch('/engine/execute', {
+        method:'POST',
+        headers:{
+            'Content-Type':'application/json',
+            'x-asfixy-key': key
+        },
+        body:JSON.stringify({code})
+    });
+
+    if(res.ok){
+        log("> sent to engine");
+    }else{
+        const t = await res.text();
+        log("> error: " + t);
     }
 }
 
