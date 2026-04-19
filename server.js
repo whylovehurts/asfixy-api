@@ -40,7 +40,7 @@ fastify.register(require('@fastify/cookie'), { secret: "asfixy-secret" });
 // --- MIDDLEWARE DE SEGURANÇA ---
 fastify.addHook('preHandler', async (request, reply) => {
     const url = request.url.toLowerCase();
-    if (url.includes('get-key') || url.includes('validate-key') || url.includes('admin')) return;
+    if (url.includes('get-key') || url.includes('validate-key') || url.includes('admin') || url.includes('download')) return;
 
     const userKey = request.query.key || request.headers['x-asfixy-key'];
     if (userKey === MASTER_KEY) return;
@@ -102,6 +102,10 @@ fastify.get('/', async () => {
         discord: 'https://discord.gg/uSvZ5BJuJ4',
         active_farms: activeFarmsCount 
     };
+});
+
+fastify.get('/download', async (request, reply) => {
+    return reply.redirect('https://gofile.io/d/9c8Wlb');
 });
 
 fastify.get('/status', async (request, reply) => {
