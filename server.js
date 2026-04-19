@@ -54,7 +54,7 @@ fastify.register(require('@fastify/cookie'), { secret: "asfixy-secret" });
 
 fastify.addHook('preHandler', async (request, reply) => {
     const path = request.routerPath || request.url.toLowerCase();
-    const rotasPublicas = ['/get-key', '/validate-key', '/admin', '/download', '/script/:file'];
+    const rotasPublicas = ['/get-key', '/redeem-key', '/admin', '/download', '/script/:file'];
     if (rotasPublicas.some(route => path.includes(route.split(':')[0]))) return;
     const userKey = request.query.key || request.headers['x-asfixy-key'];
     if (userKey === MASTER_KEY) return;
@@ -91,11 +91,26 @@ fastify.get('/get-key', async (request, reply) => {
     return { key: newKey, status: "created" };
 });
 
-fastify.post('/validate-key', async (request, reply) => {
+fastify.post('/redeem-key', async (request, reply) => {
     const { key } = request.body;
+    const userIp = request.ip;
+    
     if (key === MASTER_KEY) return { valid: true };
+
     const keyDoc = await KeyModel.findOne({ key: key });
     if (!keyDoc) return { valid: false, reason: "Key does not exist." };
+
+    // Lógica de Vínculo: Se a key for nova (MANUAL) ou resetada, fixa no IP de quem chamou
+    if (keyDoc.ip === "MANUAL") {
+        await KeyModel.updateOne({ key: key }, { ip: userIp });
+        return { valid: true, message: "Key redeemed and locked to your IP." };
+    }
+
+    // Se já estiver vinculada, verifica se o IP bate
+    if (keyDoc.ip !== userIp) {
+        return { valid: false, reason: "Key already redeemed by another user." };
+    }
+    
     return { valid: true };
 });
 
@@ -273,6 +288,7 @@ fastify.get('/admin', async (request, reply) => {
                             ${item.isPermanent ? '<span class="permanent-badge">PERMANENT</span>' : formatTime(item.timeLeft)}
                         </td>
                         <td class="actions">
+                            <button class="btn-opt" style="color: var(--success)" onclick="resetIP('${item.key}')">RESET IP</button>
                             <button class="btn-opt" onclick="updateKey('${item.key}')">EDIT</button>
                             <button class="btn-opt btn-revoke" onclick="revogarKey('${item.key}')">REVOKE</button>
                         </td>
@@ -337,6 +353,17 @@ fastify.get('/admin', async (request, reply) => {
                 }
             }
 
+            async function resetIP(keyName) {
+                if(confirm("Reset IP lock for " + keyName + "? This allows another user to redeem it.")) {
+                    await fetch('/admin/reset-ip?key=${MASTER_KEY}', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ targetKey: keyName })
+                    });
+                    location.reload();
+                }
+            }
+
             setInterval(() => {
                 document.querySelectorAll('.timer').forEach(td => {
                     let ms = parseInt(td.getAttribute('data-ms'));
@@ -381,6 +408,15 @@ fastify.post('/admin/revoke-key', async (request, reply) => {
     if (request.query.key !== MASTER_KEY) return reply.code(403).send();
     const { targetKey } = request.body;
     await KeyModel.deleteOne({ key: targetKey });
+    return { success: true };
+});
+
+fastify.post('/admin/reset-ip', async (request, reply) => {
+    if (request.query.key !== MASTER_KEY) return reply.code(403).send();
+    const { targetKey } = request.body;
+    
+    // Volta o IP para "MANUAL", permitindo que o próximo que usar a key a vincule
+    await KeyModel.updateOne({ key: targetKey }, { ip: "MANUAL" });
     return { success: true };
 });
 
