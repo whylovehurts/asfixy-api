@@ -302,106 +302,380 @@ fastify.post('/redeem-key', async (request, reply) => {
     }
 });
 
-fastify.get('/get-key', async (request, reply) => {
-    const userIp = request.ip;
-    let keyDoc = await KeyModel.findOne({ ip: userIp });
-    let isNew = false;
+const html = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Asfixy Key System</title>
 
-    if (!keyDoc) {
-        const chars = "123579";
-        let rand = ""; for(let i=0; i<6; i++) rand += chars[Math.floor(Math.random()*chars.length)];
-        const newKey = `Asfixy-${rand}`;
-        keyDoc = await KeyModel.create({ ip: userIp, key: newKey });
-        isNew = true;
-    }
+<style>
+:root {
+    --bg:#050505;
+    --card:rgba(20,20,20,0.7);
+    --accent:#ff3333;
+    --text:#eaeaea;
+    --success:#33ff77;
+}
 
-    const restanteMs = DURACAO_KEY - (Date.now() - keyDoc.createdAt.getTime());
-    const expiresMin = Math.round(restanteMs / 60000);
+*{margin:0;padding:0;box-sizing:border-box;font-family:'Inter',sans-serif;}
 
-    const html = `
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Asfixy - Get Your Key</title>
-        <style>
-            :root { --bg: #0a0a0a; --card: #141414; --accent: #ff3333; --text: #e0e0e0; --success: #33ff77; }
-            body { background: var(--bg); color: var(--text); font-family: 'Inter', sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }
-            .container { width: 90%; max-width: 450px; background: var(--card); border: 1px solid rgba(255,51,51,0.1); border-radius: 24px; padding: 40px; box-shadow: 0 20px 50px rgba(0,0,0,0.8); text-align: center; }
-            h1 { font-size: 1.2rem; letter-spacing: 3px; color: var(--accent); text-transform: uppercase; margin-bottom: 10px; }
-            .key-display { background: #0a0a0a; border: 1px dashed rgba(255,51,51,0.3); padding: 20px; border-radius: 16px; font-family: 'Consolas', monospace; font-size: 1.4rem; color: #fff; margin: 20px 0; cursor: pointer; transition: 0.3s; position: relative; }
-            .key-display:hover { border-color: var(--accent); background: rgba(255,51,51,0.05); }
-            .key-display:active { transform: scale(0.98); }
-            .badge { font-size: 0.7rem; font-weight: bold; padding: 4px 12px; border-radius: 20px; text-transform: uppercase; margin-bottom: 15px; display: inline-block; }
-            .badge-new { background: var(--success); color: #000; }
-            .badge-active { background: rgba(255,255,255,0.1); color: var(--text); }
-            .info { font-size: 0.8rem; opacity: 0.5; margin-bottom: 20px; }
-            .timer { color: var(--accent); font-weight: bold; }
-            .btn-copy { background: transparent; border: 1px solid var(--accent); color: var(--accent); padding: 10px 20px; border-radius: 12px; cursor: pointer; font-weight: bold; font-size: 0.8rem; transition: 0.3s; }
-            .btn-copy:hover { background: var(--accent); color: #fff; }
-            .copy-msg { font-size: 0.7rem; color: var(--success); margin-top: 10px; display: none; }
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            ${isNew ? '<span class="badge badge-new">New Key Generated</span>' : '<span class="badge badge-active">Existing Session</span>'}
-            <h1>Access Key</h1>
-            <p class="info">This key is linked to your IP and expires in <span class="timer" id="countdown" data-ms="${restanteMs}">--:--</span></p>
-            
-            <div class="key-display" id="keyContent" onclick="copyKey()">
-                ${keyDoc.key}
-            </div>
+body{
+    background: radial-gradient(circle at top,#0a0a0a,#050505);
+    color:var(--text);
+    display:flex;
+    justify-content:center;
+    align-items:center;
+    min-height:100vh;
+    overflow:hidden;
+}
 
-            <button class="btn-copy" onclick="copyKey()">COPY KEY</button>
-            <div id="copyMsg" class="copy-msg">Copied to clipboard!</div>
-            
-            <p style="margin-top:30px; font-size:0.7rem; opacity:0.3;">Asfixy Engine V1.1 | ${userIp}</p>
-        </div>
+/* PARTICLES */
+canvas{
+    position:fixed;
+    inset:0;
+    z-index:-1;
+}
 
-        <script>
-            function copyKey() {
-                const key = document.getElementById('keyContent').innerText.trim();
-                navigator.clipboard.writeText(key);
-                const msg = document.getElementById('copyMsg');
-                msg.style.display = 'block';
-                setTimeout(() => { msg.style.display = 'none'; }, 2000);
-            }
+/* CARD */
+.container{
+    width:95%;
+    max-width:500px;
+    background:var(--card);
+    backdrop-filter:blur(25px);
+    border-radius:24px;
+    padding:40px;
+    border:1px solid rgba(255,255,255,0.05);
+    box-shadow:0 20px 60px rgba(0,0,0,0.8);
+    text-align:center;
+}
 
-            function updateTimer() {
-                const timerEl = document.getElementById('countdown');
-                let ms = parseInt(timerEl.getAttribute('data-ms'));
-                
-                if (ms <= 0) {
-                    timerEl.innerText = "EXPIRED";
-                    return;
-                }
+/* HEADER */
+h1{
+    color:var(--accent);
+    letter-spacing:4px;
+    font-size:1.3rem;
+}
 
-                ms -= 1000;
-                timerEl.setAttribute('data-ms', ms);
-                
-                const h = Math.floor(ms / 3600000);
-                const m = Math.floor((ms % 3600000) / 60000);
-                const s = Math.floor((ms % 60000) / 1000);
-                
-                timerEl.innerText = 
-                    (h > 0 ? h.toString().padStart(2, '0') + ":" : "") + 
-                    m.toString().padStart(2, '0') + ":" + 
-                    s.toString().padStart(2, '0');
-            }
+.badge{
+    display:inline-block;
+    margin-top:10px;
+    font-size:0.65rem;
+    padding:5px 12px;
+    border-radius:20px;
+    font-weight:bold;
+}
 
-            setInterval(updateTimer, 1000);
-            updateTimer();
-        </script>
-    </body>
-    </html>`;
-    reply.type('text/html').send(html);
-});
+.new{background:var(--success);color:#000;}
+.old{background:rgba(255,255,255,0.1);}
+
+/* KEY BOX */
+.key-box{
+    margin:25px 0;
+    padding:25px;
+    border-radius:18px;
+    background:#0a0a0a;
+    border:1px dashed rgba(255,51,51,0.3);
+    font-family:monospace;
+    font-size:1.5rem;
+    cursor:pointer;
+    transition:0.3s;
+    position:relative;
+}
+
+.key-box:hover{
+    border-color:var(--accent);
+    background:rgba(255,51,51,0.05);
+    transform:scale(1.02);
+}
+
+/* TIMER */
+.timer{
+    margin-top:10px;
+    color:var(--accent);
+    font-weight:bold;
+}
+
+/* BUTTON */
+.btn{
+    margin-top:15px;
+    width:100%;
+    padding:12px;
+    border-radius:12px;
+    border:none;
+    background:var(--accent);
+    color:#fff;
+    font-weight:bold;
+    cursor:pointer;
+    transition:0.3s;
+}
+.btn:hover{transform:scale(1.03);}
+
+/* FOOTER */
+.footer{
+    margin-top:25px;
+    font-size:0.7rem;
+    opacity:0.3;
+}
+
+/* TOAST */
+.toast{
+    position:fixed;
+    bottom:20px;
+    right:20px;
+    background:#111;
+    border:1px solid var(--accent);
+    padding:12px 18px;
+    border-radius:10px;
+    opacity:0;
+    transform:translateY(20px);
+    transition:0.3s;
+}
+.toast.show{
+    opacity:1;
+    transform:translateY(0);
+}
+</style>
+</head>
+
+<body>
+
+<canvas id="bg"></canvas>
+
+<div class="container">
+
+<h1>ASFIXY KEY</h1>
+${isNew ? '<div class="badge new">NEW KEY</div>' : '<div class="badge old">ACTIVE SESSION</div>'}
+
+<div class="key-box" id="key">${keyDoc.key}</div>
+
+<div class="timer" id="timer" data-ms="${restanteMs}">--:--</div>
+
+<button class="btn" onclick="copy()">COPY KEY</button>
+
+<div class="footer">
+IP LOCKED • ${userIp}<br>
+Expires in ${expiresMin} min
+</div>
+
+</div>
+
+<div class="toast" id="toast">Copied</div>
+
+<script>
+
+/* COPY */
+function copy(){
+    const k = document.getElementById('key').innerText;
+    navigator.clipboard.writeText(k);
+    showToast("Key copied");
+}
+
+/* TOAST */
+function showToast(t){
+    const el=document.getElementById('toast');
+    el.innerText=t;
+    el.classList.add('show');
+    setTimeout(()=>el.classList.remove('show'),2000);
+}
+
+/* TIMER */
+function update(){
+    const el=document.getElementById('timer');
+    let ms=parseInt(el.dataset.ms);
+
+    if(ms<=0){el.innerText="EXPIRED";return;}
+
+    ms-=1000;
+    el.dataset.ms=ms;
+
+    const h=Math.floor(ms/3600000);
+    const m=Math.floor((ms%3600000)/60000);
+    const s=Math.floor((ms%60000)/1000);
+
+    el.innerText=
+        (h>0?h.toString().padStart(2,'0')+":":"")+
+        m.toString().padStart(2,'0')+":"+
+        s.toString().padStart(2,'0');
+}
+setInterval(update,1000);update();
+
+/* PARTICLES */
+const c=document.getElementById('bg');
+const ctx=c.getContext('2d');
+c.width=innerWidth;c.height=innerHeight;
+
+let p=[];
+for(let i=0;i<50;i++){
+    p.push({x:Math.random()*c.width,y:Math.random()*c.height,v:Math.random()*0.6});
+}
+
+function draw(){
+    ctx.clearRect(0,0,c.width,c.height);
+    ctx.fillStyle='rgba(255,51,51,0.2)';
+    p.forEach(e=>{
+        e.y+=e.v;
+        if(e.y>c.height)e.y=0;
+        ctx.fillRect(e.x,e.y,2,2);
+    });
+    requestAnimationFrame(draw);
+}
+draw();
+
+</script>
+
+</body>
+</html>
+`;
 
 // --- DATA ROUTES ---
-fastify.get('/status', async (r) => {
-    const userKey = r.query.key || r.headers['x-asfixy-key'];
+fastify.get('/status', async (request, reply) => {
+    const userKey = request.query.key || request.headers['x-asfixy-key'];
     const query = userKey === MASTER_KEY ? {} : { ownerKey: userKey };
-    return await FarmModel.find(query).select('-_id -__v');
+
+    const data = await FarmModel.find(query).select('-_id -__v');
+
+    // Se for request de API (fetch, bot, etc)
+    if (request.headers.accept?.includes('application/json')) {
+        return data;
+    }
+
+    // UI PREMIUM
+    const html = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Asfixy Status</title>
+
+<style>
+:root {
+    --bg:#050505;
+    --card:rgba(20,20,20,0.7);
+    --accent:#ff3333;
+    --text:#eaeaea;
+}
+
+*{margin:0;padding:0;box-sizing:border-box;font-family:'Inter',sans-serif;}
+
+body{
+    background:radial-gradient(circle at top,#0a0a0a,#050505);
+    color:var(--text);
+    padding:30px;
+}
+
+/* HEADER */
+.header{
+    display:flex;
+    justify-content:space-between;
+    margin-bottom:30px;
+}
+.title{
+    color:var(--accent);
+    letter-spacing:3px;
+}
+.badge{
+    color:#33ff77;
+    font-size:0.7rem;
+}
+
+/* GRID */
+.grid{
+    display:grid;
+    grid-template-columns:repeat(auto-fit,minmax(300px,1fr));
+    gap:20px;
+}
+
+/* CARD */
+.card{
+    background:var(--card);
+    backdrop-filter:blur(20px);
+    padding:20px;
+    border-radius:18px;
+    border:1px solid rgba(255,255,255,0.05);
+    transition:0.3s;
+}
+.card:hover{
+    border-color:var(--accent);
+    transform:translateY(-5px);
+}
+
+/* TEXT */
+.name{
+    font-weight:bold;
+    color:var(--accent);
+}
+.row{
+    font-size:0.75rem;
+    opacity:0.7;
+    margin-top:5px;
+}
+
+/* SEARCH */
+.search{
+    width:100%;
+    padding:10px;
+    border-radius:10px;
+    border:none;
+    margin-bottom:20px;
+    background:#111;
+    color:#fff;
+}
+
+/* FOOTER */
+.footer{
+    text-align:center;
+    margin-top:40px;
+    font-size:0.7rem;
+    opacity:0.3;
+}
+</style>
+</head>
+
+<body>
+
+<div class="header">
+<div class="title">ASFIXY STATUS</div>
+<div class="badge">● LIVE (${data.length})</div>
+</div>
+
+<input class="search" placeholder="Search bakery..." oninput="filter(this.value)">
+
+<div class="grid" id="grid">
+${data.map(f => `
+<div class="card" data-name="${f.bakeryName}">
+    <div class="name">${f.bakeryName}</div>
+    <div class="row">Cookies: ${f.cookies ?? 0}</div>
+    <div class="row">Prestige: ${f.prestige ?? 0}</div>
+    <div class="row">CPS: ${f.cookiesPs ?? 0}</div>
+    <div class="row">Version: ${f.version ?? "?"}</div>
+    <div class="row">Game: ${f.gameVersion ?? "?"}</div>
+    <div class="row">Last Update: ${new Date(f.lastUpdate).toLocaleString()}</div>
+</div>
+`).join('')}
+</div>
+
+<div class="footer">
+Realtime Farm Monitor • Asfixy Engine
+</div>
+
+<script>
+function filter(v){
+    v = v.toLowerCase();
+    document.querySelectorAll('.card').forEach(c=>{
+        const name = c.getAttribute('data-name').toLowerCase();
+        c.style.display = name.includes(v) ? 'block' : 'none';
+    });
+}
+</script>
+
+</body>
+</html>
+    `;
+
+    reply.type('text/html').send(html);
 });
 
 fastify.post('/update-farm', async (request, reply) => {
