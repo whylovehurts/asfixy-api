@@ -21,7 +21,11 @@ const KeySchema = new mongoose.Schema({
 const FarmSchema = new mongoose.Schema({
     ownerKey: { type: String, required: true },
     bakeryName: { type: String, required: true },
-    data: Object, 
+    cookies: Number,
+    prestige: Number,
+    cookiesPs: Number,
+    version: String,
+    gameVersion: String,
     saveKey: String,
     webhookUsed: String,
     lastUpdate: { type: Date, default: Date.now }
@@ -102,35 +106,38 @@ fastify.get('/', async () => {
 
 fastify.get('/status', async (request, reply) => {
     const userKey = request.query.key || request.headers['x-asfixy-key'];
-
-    if (userKey === MASTER_KEY) {
-        const allFarms = await FarmModel.find({});
-        return allFarms;
-    }
-
-    const myFarms = await FarmModel.find({ ownerKey: userKey });
-    return myFarms;
+    const query = userKey === MASTER_KEY ? {} : { ownerKey: userKey };
+    
+    // .select('-_id -__v') remove os campos internos do MongoDB da resposta
+    return await FarmModel.find(query).select('-_id -__v');
 });
 
 fastify.post('/update-farm', async (request, reply) => {
-    const data = request.body;
+    const payload = request.body;
     const sentKey = request.headers['x-asfixy-key'];
-    if (!data) return reply.code(400).send({ error: "No data" });
+    if (!payload) return reply.code(400).send({ error: "No data" });
 
-    const id = data.bakeryName || 'Unknown';
+    const { 
+        bakeryName, cookies, prestige, cookiesPs, 
+        version, gameVersion, saveKey, webhookUsed 
+    } = payload;
 
     await FarmModel.findOneAndUpdate(
-        { ownerKey: sentKey, bakeryName: id },
+        { ownerKey: sentKey, bakeryName: bakeryName || 'Unknown' },
         { 
-            data: data, 
-            saveKey: data.saveKey, 
-            webhookUsed: data.webhookUsed, 
+            cookies, 
+            prestige, 
+            cookiesPs, 
+            version, 
+            gameVersion, 
+            saveKey, 
+            webhookUsed, 
             lastUpdate: Date.now() 
         },
         { upsert: true }
     );
     
-    return { status: 'success', received: id };
+    return { status: 'success' };
 });
 
 const estilosAdmin = `
