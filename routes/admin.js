@@ -41,7 +41,8 @@ module.exports = async function (fastify, opts) {
         }).join('');
 
         // Lê o arquivo HTML isolado e injeta os dados dinamicamente usando .replace()
-        const viewPath = path.join(__dirname, '../../public/views/admin.html');
+       // O path.join garante que as barras sejam ajustadas automaticamente para o SO (Linux/Render)
+        const viewPath = path.join(__dirname, '..', '..', 'public', 'views', 'admin.html');
         let htmlTemplate = await fs.readFile(viewPath, 'utf8');
         
         htmlTemplate = htmlTemplate
