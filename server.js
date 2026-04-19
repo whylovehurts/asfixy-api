@@ -49,7 +49,7 @@ fastify.register(require('@fastify/cors'), { origin: true });
 // --- IP LOCK RIGOROSO (Middleware) ---
 fastify.addHook('preHandler', async (request, reply) => {
     const path = request.routerPath || request.url.toLowerCase();
-    const publicPaths = ['/get-key', '/redeem-key', '/admin', '/download', '/script/'];
+    const publicPaths = ['/', '/get-key', '/redeem', '/admin', '/download', '/script/'];
     if (publicPaths.some(p => path.includes(p))) return;
 
     const userKey = request.query.key || request.headers['x-asfixy-key'];
@@ -416,6 +416,341 @@ fastify.post('/update-farm', async (request, reply) => {
 });
 
 fastify.get('/download', async (r, rp) => rp.redirect('https://gofile.io/d/9c8Wlb'));
-fastify.get('/', async () => ({ status: "Online", engine: "Asfixy Master" }));
+fastify.get('/', async (request, reply) => {
+const html = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Asfixy Master</title>
+
+<style>
+:root {
+    --bg: #050505;
+    --card: rgba(20,20,20,0.7);
+    --accent: #ff3333;
+    --accent-soft: rgba(255,51,51,0.15);
+    --text: #eaeaea;
+}
+
+* {margin:0;padding:0;box-sizing:border-box;font-family:'Inter',sans-serif;}
+
+body {
+    background: radial-gradient(circle at top, #0a0a0a, #050505);
+    color: var(--text);
+    overflow-x:hidden;
+}
+
+/* LOADER */
+.loader {
+    position:fixed;
+    inset:0;
+    background:#000;
+    display:flex;
+    justify-content:center;
+    align-items:center;
+    z-index:9999;
+}
+.loader span {
+    color:var(--accent);
+    font-size:1.2rem;
+    letter-spacing:4px;
+    animation:pulse 1s infinite;
+}
+@keyframes pulse {
+    0%{opacity:0.3;}
+    50%{opacity:1;}
+    100%{opacity:0.3;}
+}
+
+/* PARTICLES */
+canvas {
+    position:fixed;
+    inset:0;
+    z-index:-1;
+}
+
+/* CONTAINER */
+.container {
+    max-width:1200px;
+    margin:auto;
+    padding:40px 20px;
+}
+
+/* HEADER */
+.header {
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    margin-bottom:40px;
+}
+
+.logo {
+    font-size:1.4rem;
+    letter-spacing:4px;
+    color:var(--accent);
+}
+
+.status {
+    background:rgba(51,255,119,0.1);
+    color:#33ff77;
+    padding:6px 14px;
+    border-radius:20px;
+    font-size:0.7rem;
+}
+
+/* HERO */
+.hero {
+    text-align:center;
+    margin-bottom:50px;
+}
+.hero h1 {
+    font-size:2.5rem;
+}
+.hero span {
+    color:var(--accent);
+}
+.hero p {
+    opacity:0.5;
+    font-size:0.9rem;
+    margin-top:10px;
+}
+
+/* GRID */
+.grid {
+    display:grid;
+    grid-template-columns:repeat(auto-fit,minmax(230px,1fr));
+    gap:20px;
+}
+
+/* CARD */
+.card {
+    background:var(--card);
+    backdrop-filter:blur(20px);
+    border-radius:20px;
+    padding:25px;
+    border:1px solid rgba(255,255,255,0.05);
+    transition:0.3s;
+    cursor:pointer;
+    position:relative;
+    overflow:hidden;
+}
+
+.card::after {
+    content:'';
+    position:absolute;
+    inset:0;
+    background:linear-gradient(120deg, transparent, rgba(255,51,51,0.2), transparent);
+    opacity:0;
+    transition:0.3s;
+}
+
+.card:hover {
+    transform:translateY(-6px) scale(1.02);
+    border-color:var(--accent);
+}
+.card:hover::after {
+    opacity:1;
+}
+
+.card h2 {
+    font-size:0.85rem;
+    letter-spacing:2px;
+    color:var(--accent);
+}
+.card p {
+    font-size:0.75rem;
+    opacity:0.6;
+    margin-top:10px;
+}
+
+/* STATS */
+.stats {
+    display:flex;
+    justify-content:center;
+    gap:30px;
+    margin:40px 0;
+}
+.stat {
+    text-align:center;
+}
+.stat h3 {
+    font-size:1.5rem;
+    color:var(--accent);
+}
+.stat p {
+    font-size:0.7rem;
+    opacity:0.5;
+}
+
+/* BUTTON */
+.btn {
+    margin-top:10px;
+    padding:10px;
+    border-radius:12px;
+    border:none;
+    background:var(--accent);
+    color:#fff;
+    cursor:pointer;
+}
+
+/* TOAST */
+.toast {
+    position:fixed;
+    bottom:20px;
+    right:20px;
+    background:#111;
+    border:1px solid var(--accent);
+    padding:15px 20px;
+    border-radius:12px;
+    opacity:0;
+    transform:translateY(20px);
+    transition:0.3s;
+}
+.toast.show {
+    opacity:1;
+    transform:translateY(0);
+}
+
+/* FOOTER */
+.footer {
+    text-align:center;
+    margin-top:60px;
+    font-size:0.7rem;
+    opacity:0.3;
+}
+</style>
+</head>
+
+<body>
+
+<div class="loader"><span>ASFIXY</span></div>
+<canvas id="bg"></canvas>
+
+<div class="container">
+
+<div class="header">
+<div class="logo">ASFIXY MASTER</div>
+<div class="status">● ONLINE</div>
+</div>
+
+<div class="hero">
+<h1>Engine <span>Premium</span></h1>
+<p>Secure • Fast • Locked • Advanced System</p>
+</div>
+
+<div class="stats">
+<div class="stat">
+<h3 id="users">0</h3>
+<p>ACTIVE FARMS</p>
+</div>
+<div class="stat">
+<h3>99.9%</h3>
+<p>UPTIME</p>
+</div>
+<div class="stat">
+<h3>V1.1</h3>
+<p>VERSION</p>
+</div>
+</div>
+
+<div class="grid">
+
+<div class="card" onclick="go('/download')">
+<h2>DOWNLOAD</h2>
+<p>Get latest engine build.</p>
+</div>
+
+<div class="card" onclick="go('/get-key')">
+<h2>GET KEY</h2>
+<p>Generate instant key.</p>
+</div>
+
+<div class="card" onclick="go('/redeem')">
+<h2>REDEEM</h2>
+<p>Activate your device.</p>
+</div>
+
+<div class="card" onclick="copyApi()">
+<h2>API STATUS</h2>
+<p>Copy endpoint.</p>
+<button class="btn">COPY</button>
+</div>
+
+<div class="card" onclick="go('https://discord.gg/uSvZ5BJuJ4')">
+<h2>DISCORD</h2>
+<p>Join community.</p>
+</div>
+
+</div>
+
+<div class="footer">
+Asfixy Engine © 2026 • Premium System
+</div>
+
+</div>
+
+<div class="toast" id="toast">Copied!</div>
+
+<script>
+
+/* LOADER */
+setTimeout(()=>document.querySelector('.loader').style.display='none',800);
+
+/* NAV */
+function go(url){ window.open(url, '_self'); }
+
+/* TOAST */
+function toast(msg){
+    const t = document.getElementById('toast');
+    t.innerText = msg;
+    t.classList.add('show');
+    setTimeout(()=>t.classList.remove('show'),2000);
+}
+
+/* COPY */
+function copyApi(){
+    navigator.clipboard.writeText(location.origin + '/status');
+    toast("API copied");
+}
+
+/* FETCH STATS */
+fetch('/status')
+.then(r=>r.json())
+.then(data=>{
+    document.getElementById('users').innerText = data.length || 0;
+}).catch(()=>{});
+
+/* PARTICLES */
+const c = document.getElementById('bg');
+const ctx = c.getContext('2d');
+c.width = innerWidth;
+c.height = innerHeight;
+
+let p = [];
+for(let i=0;i<60;i++){
+    p.push({x:Math.random()*c.width,y:Math.random()*c.height,v:Math.random()*0.5});
+}
+
+function draw(){
+    ctx.clearRect(0,0,c.width,c.height);
+    ctx.fillStyle='rgba(255,51,51,0.2)';
+    p.forEach(e=>{
+        e.y+=e.v;
+        if(e.y>c.height) e.y=0;
+        ctx.fillRect(e.x,e.y,2,2);
+    });
+    requestAnimationFrame(draw);
+}
+draw();
+
+</script>
+
+</body>
+</html>
+`;
+reply.type('text/html').send(html);
+});
 
 fastify.listen({ port: process.env.PORT || 3000, host: '0.0.0.0' });
