@@ -55,13 +55,24 @@ fastify.register(require('@fastify/cookie'), { secret: "asfixy-secret" });
 fastify.addHook('preHandler', async (request, reply) => {
     const path = request.routerPath || request.url.toLowerCase();
     const rotasPublicas = ['/get-key', '/redeem-key', '/admin', '/download', '/script/:file'];
+    
     if (rotasPublicas.some(route => path.includes(route.split(':')[0]))) return;
+
     const userKey = request.query.key || request.headers['x-asfixy-key'];
     if (userKey === MASTER_KEY) return;
+
     const keyDoc = await KeyModel.findOne({ key: userKey });
-    if (!keyDoc) return reply.code(401).send({ error: "Unauthorized", message: "Invalid or expired key." });
-    if (!keyDoc.isPermanent && keyDoc.ip !== "MANUAL" && keyDoc.ip !== request.ip) {
-        return reply.code(401).send({ error: "Unauthorized", message: "Key belongs to another IP." });
+    
+    if (!keyDoc) {
+        return reply.code(401).send({ error: "Unauthorized", message: "Invalid or expired key." });
+    }
+
+    if (keyDoc.ip === "MANUAL") {
+        return reply.code(403).send({ error: "Forbidden", message: "Key not redeemed. Lock your IP via /redeem-key first." });
+    }
+
+    if (keyDoc.ip !== request.ip) {
+        return reply.code(401).send({ error: "Unauthorized", message: "Hardware ID/IP mismatch. Key is locked to another device." });
     }
 });
 
@@ -165,11 +176,20 @@ fastify.get('/admin', async (request, reply) => {
     const userKey = request.query.key;
     if (userKey !== MASTER_KEY) return reply.code(403).send("ACCESS DENIED");
 
-    const allKeys = await KeyModel.find({});
+    const page = parseInt(request.query.page) || 1;
+    const limit = 10;
+    const skip = (page - 1) * limit;
+
+    const totalKeys = await KeyModel.countDocuments();
+    const allKeys = await KeyModel.find({}).sort({ createdAt: -1 }).skip(skip).limit(limit);
+    
+    const totalPages = Math.ceil(totalKeys / limit);
+
     const keysData = allKeys.map(k => {
         const ms = DURACAO_KEY - (Date.now() - k.createdAt.getTime());
         return { 
             key: k.key, 
+            ip: k.ip,
             isPermanent: k.isPermanent,
             timeLeft: k.isPermanent ? -1 : Math.max(0, ms) 
         };
@@ -275,7 +295,7 @@ fastify.get('/admin', async (request, reply) => {
             <table>
                 <thead>
                     <tr>
-                        <th>Key Identification</th>
+                        <th>Key / Linked IP</th>
                         <th>Status / Expiry</th>
                         <th>Management</th>
                     </tr>
@@ -283,7 +303,10 @@ fastify.get('/admin', async (request, reply) => {
                 <tbody>
                     ${keysData.map(item => `
                     <tr>
-                        <td><span class="key-name">${item.key}</span></td>
+                        <td>
+                            <span class="key-name">${item.key}</span><br>
+                            <small style="opacity: 0.5; font-family: monospace;">${item.ip}</small>
+                        </td>
                         <td class="timer" data-ms="${item.timeLeft}">
                             ${item.isPermanent ? '<span class="permanent-badge">PERMANENT</span>' : formatTime(item.timeLeft)}
                         </td>
@@ -292,6 +315,14 @@ fastify.get('/admin', async (request, reply) => {
                             <button class="btn-opt" onclick="updateKey('${item.key}')">EDIT</button>
                             <button class="btn-opt btn-revoke" onclick="revogarKey('${item.key}')">REVOKE</button>
                         </td>
+                        <div style="display: flex; justify-content: space-between; margin-top: 20px;">
+                        <div>
+                            <button class="btn-opt" onclick="changePage(${page - 1})" ${page <= 1 ? 'disabled' : ''}>PREV</button>
+                            <span>Page ${page} of ${totalPages}</span>
+                            <button class="btn-opt" onclick="changePage(${page + 1})" ${page >= totalPages ? 'disabled' : ''}>NEXT</button>
+                        </div>
+                        <button class="btn-main" style="background: var(--accent); color: white;" onclick="bulkCreate()">BULK GENERATE</button>
+                    </div>
                     </tr>
                     `).join('')}
                 </tbody>
@@ -364,6 +395,23 @@ fastify.get('/admin', async (request, reply) => {
                 }
             }
 
+            function changePage(p) {
+                window.location.href = `/admin?key=${MASTER_KEY}&page=` + p;
+            }
+
+            async function bulkCreate() {
+                const amount = prompt("How many random keys to generate?");
+                if(!amount || isNaN(amount)) return;
+                const perm = confirm("Make these keys permanent?");
+                
+                await fetch('/admin/bulk-create?key=${MASTER_KEY}', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ amount: parseInt(amount), permanent: perm })
+                });
+                location.reload();
+            }
+
             setInterval(() => {
                 document.querySelectorAll('.timer').forEach(td => {
                     let ms = parseInt(td.getAttribute('data-ms'));
@@ -418,6 +466,34 @@ fastify.post('/admin/reset-ip', async (request, reply) => {
     // Volta o IP para "MANUAL", permitindo que o próximo que usar a key a vincule
     await KeyModel.updateOne({ key: targetKey }, { ip: "MANUAL" });
     return { success: true };
+});
+
+fastify.post('/admin/bulk-create', async (request, reply) => {
+    if (request.query.key !== MASTER_KEY) return reply.code(403).send();
+    const { amount, permanent } = request.body;
+    
+    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    const generated = [];
+
+    for (let i = 0; i < amount; i++) {
+        let randomKey = "Asfixy-";
+        for (let j = 0; j < 23; j++) { // 7 (prefixo) + 23 = 30 caracteres
+            randomKey += chars.charAt(Math.floor(Math.random() * chars.length));
+        }
+        generated.push({
+            ip: "MANUAL",
+            key: randomKey,
+            isPermanent: permanent,
+            createdAt: new Date()
+        });
+    }
+
+    try {
+        await KeyModel.insertMany(generated);
+        return { success: true, count: amount };
+    } catch (err) {
+        return reply.code(500).send({ error: "Bulk generation failed." });
+    }
 });
 
 fastify.get('/script/:file', async (request, reply) => {
