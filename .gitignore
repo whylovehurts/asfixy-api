@@ -1,6 +1,6 @@
 .gitignore
 node_modules/
-Scripts/
+Scripts/*
 !Scripts/asfixy.js
 Some Utils/
 bot.py
