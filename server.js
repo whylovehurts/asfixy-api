@@ -317,7 +317,7 @@ fastify.addHook('preHandler', async (request, reply) => {
             '/redeem',
             '/redeem-key',
             '/admin',
-            '/script/'
+            '/script'
         ];
         if (request.method === 'OPTIONS') return;
         if (path === '/' || publicPaths.some(p => path.startsWith(p))) return;
