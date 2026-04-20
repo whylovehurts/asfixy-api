@@ -1629,10 +1629,11 @@ function copyApi(){
 const savedKey = localStorage.getItem('asfixy_key');
 const kd = document.getElementById('keyDisplay');
 if(savedKey) {
-    kd.innerHTML = `<h3>YOUR ACTIVE KEY</h3><div class="key-val">\${savedKey}</div><p style="font-size:0.75rem;opacity:0.5;">Injected and ready</p>`;
+    kd.innerHTML = '<h3>YOUR ACTIVE KEY</h3><div class="key-val">' + savedKey + '</div><p style="font-size:0.75rem;opacity:0.5;">Injected and ready</p>';
 } else {
-    kd.innerHTML = `<h3>NO KEY DETECTED</h3><div class="key-val">---</div><a href="/get-key" class="btn-get">GET NEW KEY</a>`;
+    kd.innerHTML = '<h3>NO KEY DETECTED</h3><div class="key-val">---</div><a href="/get-key" class="btn-get">GET NEW KEY</a>';
 }
+
 
 /* PARTICLES */
 const c = document.getElementById('bg');
