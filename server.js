@@ -166,21 +166,36 @@ const LogSchema = new mongoose.Schema({
 
 const LogModel = mongoose.model('Log', LogSchema);
 
-// --- HELMET: secure HTTP headers + CSP ---
+// --- NONCE GENERATOR (per-request, used by Helmet CSP) ---
+const NONCE_MAP = new WeakMap();
+function getReqNonce(req) { return NONCE_MAP.get(req); }
+
+// --- HELMET: secure HTTP headers + nonce-based CSP ---
 fastify.register(require('@fastify/helmet'), {
     contentSecurityPolicy: {
+        useDefaults: false,
         directives: {
             defaultSrc: ["'self'"],
-            scriptSrc: ["'self'"],        // NO unsafe-inline, NO unsafe-eval
-            styleSrc: ["'self'", "'unsafe-inline'"], // inline styles kept for embedded CSS
+            // scriptSrc is set dynamically per-request via the addHook below
+            styleSrc: ["'self'", "'unsafe-inline'"],
             imgSrc: ["'self'", "data:"],
             connectSrc: ["'self'"],
             fontSrc: ["'self'"],
             objectSrc: ["'none'"],
-            frameSrc: ["'none'"],
-            upgradeInsecureRequests: []
+            frameSrc: ["'none'"]
         }
     }
+});
+
+// Generate nonce and patch CSP header on every request
+fastify.addHook('onRequest', async (req, reply) => {
+    const nonce = crypto.randomBytes(16).toString('base64');
+    NONCE_MAP.set(req, nonce);
+    // Override the script-src after helmet sets the header
+    reply.header(
+        'Content-Security-Policy',
+        `default-src 'self'; script-src 'self' 'nonce-${nonce}'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; frame-src 'none'`
+    );
 });
 
 // --- CORS: whitelist only known origins ---
@@ -276,7 +291,7 @@ p { opacity:0.7; font-size:0.9rem; margin-bottom:25px; line-height:1.5; }
     <p>${desc}</p>
     <a href="${btnHref}" class="btn">${btnText}</a>
 </div>
-<script>
+<script nonce="${getReqNonce(request)}">
 const c=document.getElementById('bg');const ctx=c.getContext('2d');c.width=innerWidth;c.height=innerHeight;
 let p=[];for(let i=0;i<50;i++)p.push({x:Math.random()*c.width,y:Math.random()*c.height,v:Math.random()*0.5});
 function draw(){ctx.clearRect(0,0,c.width,c.height);ctx.fillStyle='rgba(255,51,51,0.2)';
@@ -428,7 +443,7 @@ fastify.get('/admin', async (request, reply) => {
                 <button class="btn-opt" style="background:var(--accent); color:white; border:none;" onclick="bulkCreate()">BULK GENERATE</button>
             </div>
         </div>
-        <script>
+        <script nonce="${getReqNonce(request)}">
             const MASTER_KEY = "${request.query.key}";
             function formatTime(ms) {
                 if (ms < 0) return "PERMANENT";
@@ -596,7 +611,7 @@ fastify.get('/redeem', async (request, reply) => {
             <button onclick="redeem()">ACTIVATE DEVICE</button>
             <div id="status"></div>
         </div>
-        <script>
+        <script nonce="${getReqNonce(request)}">
             async function redeem() {
                 const key = document.getElementById('keyInput').value;
                 const status = document.getElementById('status');
@@ -867,9 +882,7 @@ ${keyDoc.isPermanent ? 'Never expires' : 'Expires in ' + expiresMin + ' min'}
 
 <div class="toast" id="toast">Copied</div>
 
-<script>
-
-/* COPY */
+<script nonce="${getReqNonce(request)}">
 function copy(){
     navigator.clipboard.writeText(document.getElementById('key').innerText);
     showToast("Key copied");
@@ -1211,7 +1224,7 @@ Realtime Farm Monitor • Asfixy Engine
 
 <div class="toast" id="toast">Save copied!</div>
 
-<script>
+<script nonce="${getReqNonce(request)}">
 function filter(v){
     v = v.toLowerCase();
     document.querySelectorAll('.card').forEach(c=>{
@@ -1573,9 +1586,7 @@ Asfixy Engine © 2026 • Premium System
 
 <div class="toast" id="toast">Copied!</div>
 
-<script>
-
-/* LOADER */
+<script nonce="${getReqNonce(req)}">
 setTimeout(()=>document.querySelector('.loader').style.display='none',800);
 
 /* NAV */
@@ -1862,9 +1873,7 @@ Game.Earn(1000000);
 
 <div class="toast" id="toast">Message</div>
 
-<script>
-
-function showToast(msg, type = "error"){
+<script nonce="${getReqNonce(req)}">
     const t=document.getElementById('toast');
     t.innerText=msg;
     t.className = 'toast show ' + type;
