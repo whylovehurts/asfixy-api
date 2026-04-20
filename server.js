@@ -479,8 +479,8 @@ fastify.get('/admin', async (request, reply) => {
             <div class="header">
                 <div class="logo">ASFIXY ADMIN</div>
                 <div style="display:flex; gap:15px;">
-                    <button class="btn btn-outline" onclick="openModal('bulk')">BULK CREATE</button>
-                    <button class="btn" onclick="openModal('create')">+ NEW KEY</button>
+                    <button class="btn btn-outline" id="btnBulk">BULK CREATE</button>
+                    <button class="btn" id="btnCreate">+ NEW KEY</button>
                 </div>
             </div>
 
@@ -506,9 +506,9 @@ fastify.get('/admin', async (request, reply) => {
                                     : '<div class="badge temp timer" data-ms="'+item.timeLeft+'">'+formatTimeServer(item.timeLeft)+'</div>'}
                             </td>
                             <td class="actions">
-                                <button class="btn-sm edit" onclick="openModal('edit', '${escapeJs(item.key)}')">EDIT</button>
-                                <button class="btn-sm reset" onclick="action('reset-ip', '${escapeJs(item.key)}')">RESET IP</button>
-                                <button class="btn-sm revoke" onclick="action('revoke-key', '${escapeJs(item.key)}')">REVOKE</button>
+                                <button class="btn-sm edit act-btn" data-act="edit" data-key="${escapeHtml(item.key)}">EDIT</button>
+                                <button class="btn-sm reset act-btn" data-act="reset-ip" data-key="${escapeHtml(item.key)}">RESET IP</button>
+                                <button class="btn-sm revoke act-btn" data-act="revoke-key" data-key="${escapeHtml(item.key)}">REVOKE</button>
                             </td>
                         </tr>
                         `).join('')}
@@ -516,9 +516,9 @@ fastify.get('/admin', async (request, reply) => {
                 </table>
 
                 <div class="pagination">
-                    <button class="btn-sm edit" onclick="changePage(${page - 1})" ${page <= 1 ? 'disabled style="opacity:0.3"' : ''}>&laquo; PREV</button>
+                    <button class="btn-sm edit" id="btnPrevPage" data-page="${page - 1}" ${page <= 1 ? 'disabled style="opacity:0.3"' : ''}>&laquo; PREV</button>
                     <div class="page-info">PAGE ${page} OF ${totalPages}</div>
-                    <button class="btn-sm edit" onclick="changePage(${page + 1})" ${page >= totalPages ? 'disabled style="opacity:0.3"' : ''}>NEXT &raquo;</button>
+                    <button class="btn-sm edit" id="btnNextPage" data-page="${page + 1}" ${page >= totalPages ? 'disabled style="opacity:0.3"' : ''}>NEXT &raquo;</button>
                 </div>
             </div>
         </div>
@@ -529,7 +529,7 @@ fastify.get('/admin', async (request, reply) => {
                 <h2 id="modalTitle">Title</h2>
                 <div id="modalBody"></div>
                 <div class="modal-actions">
-                    <button class="btn-sm edit" onclick="closeModal()">CANCEL</button>
+                    <button class="btn-sm edit" id="btnModalCancel">CANCEL</button>
                     <button class="btn-sm revoke" id="modalConfirmBtn" style="background:var(--accent); color:#fff;">CONFIRM</button>
                 </div>
             </div>
@@ -564,7 +564,6 @@ fastify.get('/admin', async (request, reply) => {
 
             function openModal(type, targetKey = '') {
                 currentAction = { type, targetKey };
-                modalConfirmBtn.onclick = executeModalAction;
 
                 if (type === 'create') {
                     modalTitle.innerText = "CREATE NEW KEY";
@@ -650,6 +649,27 @@ fastify.get('/admin', async (request, reply) => {
                     location.reload();
                 } catch(e) { alert("Action failed"); }
             }
+
+            /* Event Listeners */
+            document.getElementById('btnBulk').addEventListener('click', () => openModal('bulk'));
+            document.getElementById('btnCreate').addEventListener('click', () => openModal('create'));
+            document.getElementById('btnModalCancel').addEventListener('click', closeModal);
+            modalConfirmBtn.addEventListener('click', executeModalAction);
+            
+            const btnPrev = document.getElementById('btnPrevPage');
+            if(btnPrev && !btnPrev.hasAttribute('disabled')) btnPrev.addEventListener('click', () => changePage(btnPrev.getAttribute('data-page')));
+            
+            const btnNext = document.getElementById('btnNextPage');
+            if(btnNext && !btnNext.hasAttribute('disabled')) btnNext.addEventListener('click', () => changePage(btnNext.getAttribute('data-page')));
+
+            document.querySelectorAll('.act-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const act = btn.getAttribute('data-act');
+                    const k = btn.getAttribute('data-key');
+                    if (act === 'edit') openModal('edit', k);
+                    else action(act, k);
+                });
+            });
         </script>
     </body>
     </html>`;
