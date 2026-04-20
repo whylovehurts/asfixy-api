@@ -412,102 +412,244 @@ fastify.get('/admin', async (request, reply) => {
     <!DOCTYPE html>
     <html lang="en">
     <head>
-        <meta charset="UTF-8"><title>Keys Control</title>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Asfixy Admin</title>
         <style>
-            :root { --bg: #0a0a0a; --card: #141414; --accent: #ff3333; --text: #e0e0e0; --success: #33ff77; }
-            body { background: var(--bg); color: var(--text); font-family: 'Inter', sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }
-            .container { width: 90%; max-width: 900px; background: var(--card); border: 1px solid rgba(255,51,51,0.1); border-radius: 24px; padding: 40px; box-shadow: 0 20px 50px rgba(0,0,0,0.8); }
-            .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 20px; }
-            h1 { font-size: 1.2rem; letter-spacing: 3px; color: var(--accent); text-transform: uppercase; margin: 0; }
-            table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
-            th { text-align: left; opacity: 0.4; font-size: 0.7rem; text-transform: uppercase; padding: 15px; }
-            td { padding: 15px; border-bottom: 1px solid rgba(255,255,255,0.02); }
-            .key-name { font-weight: bold; color: #fff; }
-            .actions { display: flex; gap: 8px; }
-            .btn-opt { background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: var(--text); padding: 6px 12px; border-radius: 8px; font-size: 0.7rem; cursor: pointer; transition: 0.2s; font-weight: 600; }
-            .btn-opt:hover { background: var(--accent); border-color: var(--accent); color: #fff; }
-            .btn-main { background: var(--success); color: #000; border: none; padding: 10px 20px; border-radius: 12px; font-weight: bold; cursor: pointer; }
-            .footer { display: flex; justify-content: space-between; align-items: center; margin-top: 20px; }
-            .page-info { font-size: 0.8rem; opacity: 0.6; }
+            :root {
+                --bg: #050505;
+                --card: rgba(20, 20, 20, 0.6);
+                --accent: #ff3333;
+                --accent-soft: rgba(255, 51, 51, 0.15);
+                --text: #eaeaea;
+                --success: #33ff77;
+            }
+            * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Inter', sans-serif; }
+            body { background: radial-gradient(circle at top, #0a0a0a, #050505); color: var(--text); min-height: 100vh; padding: 40px 20px; overflow-y: auto; }
+            .container { max-width: 1100px; margin: 0 auto; }
+            
+            .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 40px; }
+            .logo { font-size: 1.5rem; font-weight: bold; letter-spacing: 4px; color: var(--accent); }
+            .btn { background: var(--accent); color: #fff; padding: 12px 24px; border-radius: 12px; border: none; font-weight: bold; cursor: pointer; transition: 0.3s; font-size: 0.9rem; }
+            .btn:hover { transform: scale(1.05); box-shadow: 0 0 20px rgba(255,51,51,0.4); }
+            .btn-outline { background: transparent; border: 1px solid var(--accent); color: var(--accent); }
+            .btn-outline:hover { background: var(--accent-soft); }
+
+            .panel { background: var(--card); backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.05); border-radius: 24px; padding: 30px; box-shadow: 0 20px 50px rgba(0,0,0,0.8); overflow-x: auto; }
+            
+            table { width: 100%; border-collapse: collapse; min-width: 700px; }
+            th { text-align: left; padding: 15px; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 2px; color: #888; border-bottom: 1px solid rgba(255,255,255,0.05); }
+            td { padding: 18px 15px; border-bottom: 1px solid rgba(255,255,255,0.02); vertical-align: middle; }
+            tr:hover { background: rgba(255,255,255,0.02); }
+            
+            .key-title { font-size: 1.1rem; font-weight: bold; color: var(--accent); margin-bottom: 4px; display: inline-block; }
+            .key-ip { font-size: 0.8rem; opacity: 0.5; font-family: monospace; }
+            .badge { display: inline-block; padding: 6px 12px; border-radius: 20px; font-size: 0.7rem; font-weight: bold; letter-spacing: 1px; }
+            .badge.perm { background: rgba(255,51,51,0.1); color: var(--accent); border: 1px solid var(--accent-soft); }
+            .badge.temp { background: rgba(51,255,119,0.1); color: var(--success); border: 1px solid rgba(51,255,119,0.2); }
+            
+            .actions { display: flex; gap: 10px; }
+            .btn-sm { padding: 8px 14px; font-size: 0.75rem; border-radius: 8px; border: none; cursor: pointer; transition: 0.2s; font-weight: bold; }
+            .btn-sm.edit { background: rgba(255,255,255,0.05); color: #fff; }
+            .btn-sm.edit:hover { background: rgba(255,255,255,0.1); }
+            .btn-sm.reset { background: rgba(51,255,119,0.1); color: var(--success); }
+            .btn-sm.reset:hover { background: rgba(51,255,119,0.2); }
+            .btn-sm.revoke { background: rgba(255,51,51,0.1); color: var(--accent); }
+            .btn-sm.revoke:hover { background: rgba(255,51,51,0.2); }
+
+            .pagination { display: flex; justify-content: space-between; align-items: center; margin-top: 30px; }
+            .page-info { font-size: 0.9rem; opacity: 0.6; }
+
+            /* MODAL */
+            .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(5px); display: flex; justify-content: center; align-items: center; opacity: 0; pointer-events: none; transition: 0.3s; z-index: 100; }
+            .modal-overlay.active { opacity: 1; pointer-events: all; }
+            .modal { background: #111; border: 1px solid rgba(255,51,51,0.2); border-radius: 20px; padding: 30px; width: 90%; max-width: 400px; transform: translateY(20px); transition: 0.3s; }
+            .modal-overlay.active .modal { transform: translateY(0); }
+            .modal h2 { color: var(--accent); margin-bottom: 20px; font-size: 1.3rem; letter-spacing: 2px; text-transform: uppercase; }
+            .input-group { margin-bottom: 20px; }
+            .input-group label { display: block; font-size: 0.8rem; margin-bottom: 8px; opacity: 0.7; }
+            .input-group input { width: 100%; padding: 12px; background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.1); color: #fff; border-radius: 10px; font-family: 'Inter', sans-serif; outline: none; }
+            .input-group input:focus { border-color: var(--accent); }
+            .input-group input[type="checkbox"] { width: auto; transform: scale(1.3); margin-left: 5px; }
+            .modal-actions { display: flex; justify-content: flex-end; gap: 10px; }
         </style>
     </head>
     <body>
         <div class="container">
             <div class="header">
-                <h1>Keys Control</h1>
-                <button class="btn-main" onclick="criarNovaKey()">+ NEW KEY</button>
-            </div>
-            <table>
-                <thead><tr><th>Key / IP</th><th>Status / Expiry</th><th>Actions</th></tr></thead>
-                <tbody>
-                    ${keysData.map(item => `
-                    <tr>
-                        <td>
-                            <span class="key-name">${escapeHtml(item.key)}</span><br>
-                            <small style="opacity: 0.5; font-family: monospace;">${escapeHtml(item.ip)}</small>
-                        </td>
-                        <td class="timer" data-ms="${item.timeLeft}">${item.isPermanent ? '<span style="color:var(--success)">PERMANENT</span>' : formatTimeServer(item.timeLeft)}</td>
-                        <td class="actions">
-                            <button class="btn-opt" style="color:var(--success)" onclick="resetIP('${escapeJs(item.key)}')">RESET IP</button>
-                            <button class="btn-opt" onclick="updateKey('${escapeJs(item.key)}')">EDIT</button>
-                            <button class="btn-opt" onclick="revogarKey('${escapeJs(item.key)}')" style="color:var(--accent)">REVOKE</button>
-                        </td>
-                    </tr>`).join('')}
-                </tbody>
-            </table>
-            <div class="footer">
-                <div>
-                    <button class="btn-opt" onclick="changePage(${page - 1})" ${page <= 1 ? 'disabled' : ''}>PREV</button>
-                    <span class="page-info">Page ${page} of ${totalPages}</span>
-                    <button class="btn-opt" onclick="changePage(${page + 1})" ${page >= totalPages ? 'disabled' : ''}>NEXT</button>
+                <div class="logo">ASFIXY ADMIN</div>
+                <div style="display:flex; gap:15px;">
+                    <button class="btn btn-outline" onclick="openModal('bulk')">BULK CREATE</button>
+                    <button class="btn" onclick="openModal('create')">+ NEW KEY</button>
                 </div>
-                <button class="btn-opt" style="background:var(--accent); color:white; border:none;" onclick="bulkCreate()">BULK GENERATE</button>
+            </div>
+
+            <div class="panel">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Access Key & IP</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${keysData.map(item => `
+                        <tr>
+                            <td>
+                                <div class="key-title">${escapeHtml(item.key)}</div><br>
+                                <div class="key-ip">${escapeHtml(item.ip)}</div>
+                            </td>
+                            <td>
+                                ${item.isPermanent 
+                                    ? '<div class="badge perm">PERMANENT</div>' 
+                                    : '<div class="badge temp timer" data-ms="'+item.timeLeft+'">'+formatTimeServer(item.timeLeft)+'</div>'}
+                            </td>
+                            <td class="actions">
+                                <button class="btn-sm edit" onclick="openModal('edit', '${escapeJs(item.key)}')">EDIT</button>
+                                <button class="btn-sm reset" onclick="action('reset-ip', '${escapeJs(item.key)}')">RESET IP</button>
+                                <button class="btn-sm revoke" onclick="action('revoke-key', '${escapeJs(item.key)}')">REVOKE</button>
+                            </td>
+                        </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+
+                <div class="pagination">
+                    <button class="btn-sm edit" onclick="changePage(${page - 1})" ${page <= 1 ? 'disabled style="opacity:0.3"' : ''}>&laquo; PREV</button>
+                    <div class="page-info">PAGE ${page} OF ${totalPages}</div>
+                    <button class="btn-sm edit" onclick="changePage(${page + 1})" ${page >= totalPages ? 'disabled style="opacity:0.3"' : ''}>NEXT &raquo;</button>
+                </div>
             </div>
         </div>
+
+        <!-- GLOBAL MODAL -->
+        <div class="modal-overlay" id="modalOverlay">
+            <div class="modal">
+                <h2 id="modalTitle">Title</h2>
+                <div id="modalBody"></div>
+                <div class="modal-actions">
+                    <button class="btn-sm edit" onclick="closeModal()">CANCEL</button>
+                    <button class="btn-sm revoke" id="modalConfirmBtn" style="background:var(--accent); color:#fff;">CONFIRM</button>
+                </div>
+            </div>
+        </div>
+
         <script nonce="${getReqNonce(request)}">
             const MASTER_KEY = "${request.query.key}";
+            const modalOverlay = document.getElementById('modalOverlay');
+            const modalTitle = document.getElementById('modalTitle');
+            const modalBody = document.getElementById('modalBody');
+            const modalConfirmBtn = document.getElementById('modalConfirmBtn');
+            let currentAction = null;
+
             function formatTime(ms) {
                 if (ms < 0) return "PERMANENT";
                 let s = Math.floor(ms / 1000);
                 return Math.floor(s/3600).toString().padStart(2,'0') + ":" + Math.floor((s%3600)/60).toString().padStart(2,'0') + ":" + (s%60).toString().padStart(2,'0');
             }
-            async function criarNovaKey() {
-                const name = prompt("Key Name:"); if(!name) return;
-                const perm = confirm("Permanent?");
-                await fetch('/admin/create-key?key='+MASTER_KEY, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({customName:name, permanent:perm})});
-                location.reload();
-            }
-            async function bulkCreate() {
-                const amount = prompt("How many keys?"); if(!amount) return;
-                const perm = confirm("Permanent?");
-                await fetch('/admin/bulk-create?key='+MASTER_KEY, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({amount:parseInt(amount), permanent:perm})});
-                location.reload();
-            }
-            async function updateKey(oldKey) {
-                const nName = prompt("New Name:", oldKey); const nHrs = prompt("Reset to hours (0 = keep):", "0");
-                if(nName === null) return;
-                await fetch('/admin/edit-full?key='+MASTER_KEY, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({targetKey:oldKey, newName:nName, hours:nHrs})});
-                location.reload();
-            }
-            async function resetIP(k) {
-                if(confirm("Reset IP Lock for "+k+"?")) {
-                    await fetch('/admin/reset-ip?key='+MASTER_KEY, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({targetKey:k})});
-                    location.reload();
-                }
-            }
-            async function revogarKey(k) {
-                if(confirm("Delete key "+k+"?")) {
-                    await fetch('/admin/revoke-key?key='+MASTER_KEY, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({targetKey:k})});
-                    location.reload();
-                }
-            }
-            function changePage(p) { window.location.href = '/admin?key='+MASTER_KEY+'&page='+p; }
+
             setInterval(() => {
                 document.querySelectorAll('.timer').forEach(td => {
                     let ms = parseInt(td.getAttribute('data-ms'));
                     if (ms > 0) { ms -= 1000; td.setAttribute('data-ms', ms); td.innerText = formatTime(ms); }
                 });
             }, 1000);
+
+            function changePage(p) { window.location.href = '/admin?key='+MASTER_KEY+'&page='+p; }
+
+            function closeModal() {
+                modalOverlay.classList.remove('active');
+            }
+
+            function openModal(type, targetKey = '') {
+                currentAction = { type, targetKey };
+                modalConfirmBtn.onclick = executeModalAction;
+
+                if (type === 'create') {
+                    modalTitle.innerText = "CREATE NEW KEY";
+                    modalBody.innerHTML = \`
+                        <div class="input-group">
+                            <label>Custom Name (Optional)</label>
+                            <input type="text" id="m_name" placeholder="Leave empty for random">
+                        </div>
+                        <div class="input-group" style="display:flex; align-items:center;">
+                            <label style="margin:0;">Permanent Key?</label>
+                            <input type="checkbox" id="m_perm">
+                        </div>
+                    \`;
+                } else if (type === 'bulk') {
+                    modalTitle.innerText = "BULK CREATE KEYS";
+                    modalBody.innerHTML = \`
+                        <div class="input-group">
+                            <label>Amount (1-100)</label>
+                            <input type="number" id="m_amount" value="10" min="1" max="100">
+                        </div>
+                        <div class="input-group" style="display:flex; align-items:center;">
+                            <label style="margin:0;">Permanent Keys?</label>
+                            <input type="checkbox" id="m_perm">
+                        </div>
+                    \`;
+                } else if (type === 'edit') {
+                    modalTitle.innerText = "EDIT KEY";
+                    modalBody.innerHTML = \`
+                        <div class="input-group">
+                            <label>New Name</label>
+                            <input type="text" id="m_name" value="\${targetKey}">
+                        </div>
+                        <div class="input-group">
+                            <label>Reset to Hours (0 to keep current)</label>
+                            <input type="number" id="m_hours" value="0" min="0">
+                        </div>
+                    \`;
+                }
+                modalOverlay.classList.add('active');
+            }
+
+            async function executeModalAction() {
+                let endpoint = '';
+                let payload = {};
+
+                if (currentAction.type === 'create') {
+                    endpoint = '/admin/create-key';
+                    payload = { customName: document.getElementById('m_name').value, permanent: document.getElementById('m_perm').checked };
+                } else if (currentAction.type === 'bulk') {
+                    endpoint = '/admin/bulk-create';
+                    payload = { amount: parseInt(document.getElementById('m_amount').value), permanent: document.getElementById('m_perm').checked };
+                } else if (currentAction.type === 'edit') {
+                    endpoint = '/admin/edit-full';
+                    payload = { targetKey: currentAction.targetKey, newName: document.getElementById('m_name').value, hours: parseInt(document.getElementById('m_hours').value) };
+                }
+
+                modalConfirmBtn.innerText = "WAIT...";
+                modalConfirmBtn.disabled = true;
+
+                try {
+                    await fetch(endpoint + '?key=' + MASTER_KEY, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                    location.reload();
+                } catch(e) {
+                    alert("Error executing action");
+                    closeModal();
+                    modalConfirmBtn.innerText = "CONFIRM";
+                    modalConfirmBtn.disabled = false;
+                }
+            }
+
+            async function action(type, targetKey) {
+                if (!confirm("Are you sure you want to perform this action on " + targetKey + "?")) return;
+                try {
+                    await fetch('/admin/' + type + '?key=' + MASTER_KEY, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ targetKey })
+                    });
+                    location.reload();
+                } catch(e) { alert("Action failed"); }
+            }
         </script>
     </body>
     </html>`;
@@ -537,11 +679,11 @@ fastify.post('/admin/bulk-create', async (r, rp) => {
 
     for (let i = 0; i < amount; i++) {
         let rand = "";
-        for (let j = 0; j < 23; j++)
+        for (let j = 0; j < 10; j++)
             rand += chars[Math.floor(Math.random() * chars.length)];
 
         keys.push({
-            key: `Asfixy-${rand}`,
+            key: `asfixy-${rand.toLowerCase()}`,
             isPermanent: !!r.body.permanent,
             ip: "MANUAL"
         });
@@ -569,7 +711,7 @@ fastify.post('/admin/edit-full', async (r, rp) => {
     const update = {};
 
     if (newName && newName.length <= 50)
-        update.key = newName.toLowerCase(); // sempre lowercase
+        update.key = newName.toLowerCase();
 
     const h = parseInt(hours);
     if (!isNaN(h) && h > 0) {
@@ -593,13 +735,20 @@ fastify.post('/admin/revoke-key', async (r, rp) => {
 fastify.post('/admin/create-key', async (r, rp) => {
     if (r.query.key !== MASTER_KEY) return rp.code(403).send();
 
-    const name = String(r.body.customName || "").trim();
-    if (!name || name.length > 50)
-        return rp.code(400).send({ error: "Invalid name" });
+    let name = String(r.body.customName || "").trim();
+    if (name.length > 50) return rp.code(400).send({ error: "Invalid name" });
+
+    if (!name) {
+        const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+        for (let j = 0; j < 10; j++) name += chars[Math.floor(Math.random() * chars.length)];
+        name = "asfixy-" + name.toLowerCase();
+    } else {
+        name = name.toLowerCase();
+    }
 
     await KeyModel.create({
         ip: "MANUAL",
-        key: name.toLowerCase(), // sempre lowercase para consistencia
+        key: name,
         isPermanent: !!r.body.permanent
     });
 
