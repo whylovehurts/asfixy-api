@@ -1,4 +1,6 @@
+.gitignore
 node_modules/
 Scripts/
 Some Utils/
 bot.py
+.env

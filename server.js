@@ -4,11 +4,55 @@ const fastify = require('fastify')({
 });
 const mongoose = require('mongoose');
 const crypto = require('crypto');
+const { z } = require('zod');
+const sanitizeHtml = require('sanitize-html');
+
+// Strip ALL HTML tags — returns plain text only
+function stripHtml(value) {
+    if (typeof value !== 'string') return value;
+    return sanitizeHtml(value, { allowedTags: [], allowedAttributes: {} }).trim();
+}
+
+require('dotenv').config();
+
+// --- ENV FAIL-SAFE: halt if critical vars are missing ---
+const REQUIRED_ENV = ['SIGN_SECRET', 'MONGO_URI', 'DEV_KEY'];
+for (const key of REQUIRED_ENV) {
+    if (!process.env[key]) {
+        console.error(`[FATAL] Missing required environment variable: ${key}. Halting.`);
+        process.exit(1);
+    }
+}
 
 const SIGN_SECRET = process.env.SIGN_SECRET;
 const MONGO_URI = process.env.MONGO_URI;
 const MASTER_KEY = process.env.DEV_KEY;
 const DURACAO_KEY = 12 * 60 * 60 * 1000;
+const IS_PROD = process.env.NODE_ENV === 'production';
+
+// --- ZOD SCHEMAS ---
+const keyHeaderSchema = z.object({
+    'x-asfixy-key': z.string().min(1).max(100).regex(/^[\w\-\.]+$/, 'Invalid key format')
+}).passthrough();
+
+const redeemBodySchema = z.object({
+    key: z.string().min(1).max(100).regex(/^[\w\-\.]+$/, 'Invalid key format')
+});
+
+const updateFarmBodySchema = z.object({
+    bakeryName: z.string().min(1).max(50).transform(stripHtml),
+    cookies: z.number().finite().optional(),
+    prestige: z.number().finite().optional(),
+    cookiesPs: z.number().optional(),
+    version: z.string().max(20).transform(stripHtml).optional(),
+    gameVersion: z.string().max(20).transform(stripHtml).optional(),
+    saveKey: z.string().max(100000).optional(),
+    webhookUsed: z.string().url().max(300).optional().or(z.literal(''))
+});
+
+const engineExecuteSchema = z.object({
+    code: z.string().min(1).max(5000)
+});
 
 // Helper para o Node.js renderizar o tempo inicial no servidor
 function formatTimeServer(ms) {
@@ -122,13 +166,67 @@ const LogSchema = new mongoose.Schema({
 
 const LogModel = mongoose.model('Log', LogSchema);
 
-fastify.register(require('@fastify/cors'), { origin: true });
+// --- HELMET: secure HTTP headers + CSP ---
+fastify.register(require('@fastify/helmet'), {
+    contentSecurityPolicy: {
+        directives: {
+            defaultSrc: ["'self'"],
+            scriptSrc: ["'self'"],        // NO unsafe-inline, NO unsafe-eval
+            styleSrc: ["'self'", "'unsafe-inline'"], // inline styles kept for embedded CSS
+            imgSrc: ["'self'", "data:"],
+            connectSrc: ["'self'"],
+            fontSrc: ["'self'"],
+            objectSrc: ["'none'"],
+            frameSrc: ["'none'"],
+            upgradeInsecureRequests: []
+        }
+    }
+});
+
+// --- CORS: whitelist only known origins ---
+const ALLOWED_ORIGINS = [
+    'http://127.0.0.1:3000',
+    'http://localhost:3000',
+    'https://asfixy-api.onrender.com',
+    'https://orteil.dashnet.org' // Cookie Clicker origin for extension calls
+];
+fastify.register(require('@fastify/cors'), {
+    origin: (origin, cb) => {
+        // Allow requests with no origin (curl, server-to-server, extension)
+        if (!origin || ALLOWED_ORIGINS.includes(origin)) {
+            cb(null, true);
+        } else {
+            cb(new Error('CORS: Origin not allowed'), false);
+        }
+    },
+    credentials: true
+});
+
 fastify.register(require('@fastify/cookie'));
+
+// --- GLOBAL RATE LIMIT ---
 fastify.register(require('@fastify/rate-limit'), {
     global: true,
     max: 100,
     timeWindow: '1 minute',
     keyGenerator: (req) => req.ip
+});
+
+// --- NOSQL SANITIZER: strip MongoDB operators from all user input ---
+function sanitizeInput(obj) {
+    if (typeof obj !== 'object' || obj === null) return;
+    for (const key of Object.keys(obj)) {
+        if (key.startsWith('$') || key.includes('.')) {
+            delete obj[key];
+        } else {
+            sanitizeInput(obj[key]);
+        }
+    }
+}
+
+fastify.addHook('preHandler', async (req) => {
+    if (req.body && typeof req.body === 'object') sanitizeInput(req.body);
+    if (req.query && typeof req.query === 'object') sanitizeInput(req.query);
 });
 
 const RL = new Map();
@@ -840,34 +938,47 @@ localStorage.setItem("asfixy_key", document.getElementById("key").innerText);
 </html>
 `;
 
-        reply.setCookie('asfixy_key', keyDoc.key, { path: '/', maxAge: 31536000 });
+        reply.setCookie('asfixy_key', keyDoc.key, {
+            path: '/',
+            maxAge: 31536000,
+            httpOnly: true,
+            secure: IS_PROD,
+            sameSite: 'Strict'
+        });
         return reply.type('text/html').send(html);
 
     } catch (e) {
-        console.error("get-key error:", e);
+        if (!IS_PROD) console.error("get-key error:", e);
         return reply.code(500).send({ error: "Internal error" });
     }
 });
 
 // --- PUBLIC ROUTES (NO KEY REQUIRED FOR REDEEM) ---
-fastify.post('/redeem-key', async (request, reply) => {
-    try {
-        const userIp = getClientIp(request);
-        const key = String(request.body?.key || "").trim();
-
-        // rate limit unico (removido duplicacao)
-        if (!rateLimit(userIp, 5, 60000)) {
-            return reply.code(429).send({
+fastify.post('/redeem-key', {
+    config: {
+        rateLimit: {
+            max: 5,
+            timeWindow: '1 minute',
+            keyGenerator: (req) => getClientIp(req),
+            errorResponseBuilder: () => ({
                 valid: false,
                 reason: "Too many requests",
-                message: "Too many requests"
-            });
+                message: "Too many attempts. Please wait 1 minute."
+            })
+        }
+    }
+}, async (request, reply) => {
+    try {
+        const userIp = getClientIp(request);
+
+        // --- ZOD validation ---
+        const parsed = redeemBodySchema.safeParse(request.body);
+        if (!parsed.success) {
+            return reply.code(400).send({ valid: false, reason: "Invalid input", message: parsed.error.issues[0]?.message });
         }
 
-        if (!key)
-            return reply.code(400).send({ valid: false, reason: "Key required", message: "Key required" });
+        const key = parsed.data.key.trim();
 
-        // busca case-insensitive usando collation (seguro e retrocompativel)
         const keyDoc = await KeyModel.findOne({
             key: key.toLowerCase()
         }).collation({ locale: 'en', strength: 2 });
@@ -875,16 +986,20 @@ fastify.post('/redeem-key', async (request, reply) => {
         if (!keyDoc)
             return reply.send({ valid: false, reason: "Invalid key", message: "Invalid key" });
 
-        // já bindado a outro IP
         if (keyDoc.ip !== "MANUAL" && keyDoc.ip !== userIp) {
             return reply.send({ valid: false, reason: "Already used", message: "Key already bound to another device" });
         }
 
-        // ativa IP LOCK
         keyDoc.ip = userIp;
         await keyDoc.save();
 
-        reply.setCookie('asfixy_key', keyDoc.key, { path: '/', maxAge: 31536000 });
+        reply.setCookie('asfixy_key', keyDoc.key, {
+            path: '/',
+            maxAge: 31536000,
+            httpOnly: true,
+            secure: IS_PROD,
+            sameSite: 'Strict'
+        });
 
         return reply.send({
             valid: true,
@@ -894,7 +1009,7 @@ fastify.post('/redeem-key', async (request, reply) => {
         });
 
     } catch (err) {
-        console.error("redeem-key error:", err);
+        if (!IS_PROD) console.error("redeem-key error:", err);
         return reply.code(500).send({ valid: false, reason: "Internal error" });
     }
 });
@@ -916,7 +1031,7 @@ fastify.get('/script/:name', async (request, reply) => {
         const scriptContent = await response.text();
         return reply.type('application/javascript').send(scriptContent);
     } catch (err) {
-        console.error("Script fetch error:", err);
+        if (!IS_PROD) console.error("Script fetch error:", err);
         return reply.code(500).send("Error loading script");
     }
 });
@@ -1077,15 +1192,15 @@ body{
 
 <div class="grid" id="grid">
 ${data.map(f => `
-<div class="card" data-name="${f.bakeryName}">
+<div class="card" data-name="${escapeHtml(String(f.bakeryName ?? ''))}"> 
     <button class="copy-btn" onclick="copySave('${escapeJs(f.saveKey || '')}')">COPY</button>
-    <div class="name">${f.bakeryName}</div>
-    <div class="row">Cookies: ${f.cookies ?? 0}</div>
-    <div class="row">Prestige: ${f.prestige ?? 0}</div>
-    <div class="row">CPS: ${f.cookiesPs ?? 0}</div>
-    <div class="row">Version: ${f.version ?? "?"}</div>
-    <div class="row">Game: ${f.gameVersion ?? "?"}</div>
-    <div class="row">Last Update: ${new Date(f.lastUpdate).toLocaleString()}</div>
+    <div class="name">${escapeHtml(String(f.bakeryName ?? ''))}</div>
+    <div class="row">Cookies: ${escapeHtml(String(f.cookies ?? 0))}</div>
+    <div class="row">Prestige: ${escapeHtml(String(f.prestige ?? 0))}</div>
+    <div class="row">CPS: ${escapeHtml(String(f.cookiesPs ?? 0))}</div>
+    <div class="row">Version: ${escapeHtml(String(f.version ?? '?'))}</div>
+    <div class="row">Game: ${escapeHtml(String(f.gameVersion ?? '?'))}</div>
+    <div class="row">Last Update: ${escapeHtml(new Date(f.lastUpdate).toLocaleString())}</div>
 </div>
 `).join('')}
 </div>
@@ -1134,37 +1249,25 @@ fastify.post('/update-farm', {
     }
 }, async (request, reply) => {
 
-    const key = request.headers['x-asfixy-key'];
-    if (!key)
-        return reply.code(401).send({ error: "Missing key" });
+    // --- ZOD: validate x-asfixy-key header ---
+    const headerParsed = keyHeaderSchema.safeParse(request.headers);
+    if (!headerParsed.success)
+        return reply.code(401).send({ error: "Invalid or missing key header" });
+
+    const key = headerParsed.data['x-asfixy-key'];
 
     const keyDoc = await KeyModel.findOne({ key: key.toLowerCase() })
         .collation({ locale: 'en', strength: 2 });
     if (!keyDoc)
         return reply.code(403).send({ error: "Invalid key" });
 
-    const {
-        bakeryName,
-        cookies,
-        prestige,
-        cookiesPs,
-        version,
-        gameVersion,
-        saveKey,
-        webhookUsed
-    } = request.body || {};
+    // --- ZOD: validate body ---
+    const bodyParsed = updateFarmBodySchema.safeParse(request.body);
+    if (!bodyParsed.success)
+        return reply.code(400).send({ error: bodyParsed.error.issues[0]?.message || "Invalid body" });
 
-    // validação mínima obrigatória
-    if (typeof bakeryName !== "string" || bakeryName.length < 1 || bakeryName.length > 50)
-        return reply.code(400).send({ error: "Invalid bakeryName" });
+    const { bakeryName, cookies, prestige, cookiesPs, version, gameVersion, saveKey, webhookUsed } = bodyParsed.data;
 
-    if (cookies !== undefined && typeof cookies !== "number")
-        return reply.code(400).send({ error: "Invalid cookies" });
-
-    if (prestige !== undefined && typeof prestige !== "number")
-        return reply.code(400).send({ error: "Invalid prestige" });
-
-    // cooldown por key (anti flood mesmo com rate-limit)
     const now = Date.now();
     global.FARM_CD = global.FARM_CD || {};
 
@@ -1549,18 +1652,19 @@ fastify.get('/engine/pull', async (req, reply) => {
 
 // recebe código do site
 fastify.post('/engine/execute', async (req, reply) => {
-    const key = req.headers['x-asfixy-key'];
-    const code = req.body?.code;
-    const userIp = getClientIp(req);
+    // --- ZOD: validate header ---
+    const headerParsed = keyHeaderSchema.safeParse(req.headers);
+    if (!headerParsed.success)
+        return reply.code(401).send({ error: "Invalid or missing key header" });
 
-    if (!key)
-        return reply.code(401).send({ error: "Missing key" });
+    const key = headerParsed.data['x-asfixy-key'];
 
-    if (!code || typeof code !== "string")
-        return reply.code(400).send({ error: "Invalid code" });
+    // --- ZOD: validate body ---
+    const bodyParsed = engineExecuteSchema.safeParse(req.body);
+    if (!bodyParsed.success)
+        return reply.code(400).send({ error: bodyParsed.error.issues[0]?.message || "Invalid code" });
 
-    if (code.length > 5000)
-        return reply.code(400).send({ error: "Code too large" });
+    const { code } = bodyParsed.data;
 
     const keyDoc = await KeyModel.findOne({ key: key.toLowerCase() })
         .collation({ locale: 'en', strength: 2 });
