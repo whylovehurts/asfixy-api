@@ -501,9 +501,9 @@ fastify.get('/admin', async (request, reply) => {
                                 <div class="key-ip">${escapeHtml(item.ip)}</div>
                             </td>
                             <td>
-                                ${item.isPermanent 
-                                    ? '<div class="badge perm">PERMANENT</div>' 
-                                    : '<div class="badge temp timer" data-ms="'+item.timeLeft+'">'+formatTimeServer(item.timeLeft)+'</div>'}
+                                ${item.isPermanent
+            ? '<div class="badge perm">PERMANENT</div>'
+            : '<div class="badge temp timer" data-ms="' + item.timeLeft + '">' + formatTimeServer(item.timeLeft) + '</div>'}
                             </td>
                             <td class="actions">
                                 <button class="btn-sm edit act-btn" data-act="edit" data-key="${escapeHtml(item.key)}">EDIT</button>
@@ -797,7 +797,7 @@ fastify.get('/redeem', async (request, reply) => {
         <div class="container">
             <h1>Activation</h1>
             <p style="font-size: 0.8rem; opacity: 0.5;">Enter your key to lock it to this device.</p>
-            <input type="text" id="keyInput" placeholder="Asfixy-XXXXXX">
+            <input type="text" id="keyInput" placeholder="asfixy-XXXXXX">
             <button id="redeemBtn">ACTIVATE DEVICE</button>
             <div id="status"></div>
         </div>
@@ -2001,12 +2001,12 @@ fastify.post('/engine/execute', async (req, reply) => {
 fastify.post('/log', async (req, reply) => {
     const key = req.headers['x-asfixy-key'] || 'UNKNOWN_KEY';
     const { msg, type } = req.body || {};
-    
+
     // Formata visualmente no console do server
-    const t = type === 'error' ? '\x1b[31m[ERROR]\x1b[0m' : 
-              type === 'warn' ? '\x1b[33m[WARN]\x1b[0m' : 
-              type === 'success' ? '\x1b[32m[SUCCESS]\x1b[0m' : '\x1b[36m[INFO]\x1b[0m';
-              
+    const t = type === 'error' ? '\x1b[31m[ERROR]\x1b[0m' :
+        type === 'warn' ? '\x1b[33m[WARN]\x1b[0m' :
+            type === 'success' ? '\x1b[32m[SUCCESS]\x1b[0m' : '\x1b[36m[INFO]\x1b[0m';
+
     console.log(`[ClientLog] ${t} [${key}] ${msg}`);
     return { ok: true };
 });
