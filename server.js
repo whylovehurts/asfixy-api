@@ -1680,9 +1680,9 @@ const kd = document.getElementById('keyDisplay');
 if(savedKey) {
     kd.innerHTML = '<div class="badge">ACTIVE SESSION</div>' +
         '<h3>ASFIXY ACCESS</h3>' +
-        '<div class="key-val" style="cursor:pointer;" onclick="navigator.clipboard.writeText(\'' + savedKey + '\');toast(\'Key copied!\');">' + savedKey + '</div>' +
+        '<div class="key-val" style="cursor:pointer;" onclick="navigator.clipboard.writeText(\\\'' + savedKey + '\\\');toast(\\\'Key copied!\\\');">' + savedKey + '</div>' +
         '<div id="keyTime" style="color:var(--accent);margin-bottom:20px;font-size:1.1rem;letter-spacing:2px;">Loading...</div>' +
-        '<button class="btn-get" onclick="navigator.clipboard.writeText(\'' + savedKey + '\');toast(\'Key copied!\');">COPY KEY</button>' +
+        '<button class="btn-get" onclick="navigator.clipboard.writeText(\\\'' + savedKey + '\\\');toast(\\\'Key copied!\\\');">COPY KEY</button>' +
         '<div style="font-size:0.7rem;opacity:0.5;margin-top:15px;" id="keyIp">IP: Checking...</div>';
 
     fetch('/key-info/' + savedKey).then(r=>r.json()).then(d => {
