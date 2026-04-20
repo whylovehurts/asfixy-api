@@ -6,6 +6,9 @@ const mongoose = require('mongoose');
 const crypto = require('crypto');
 const { z } = require('zod');
 const sanitizeHtml = require('sanitize-html');
+const fs = require('fs');
+const path = require('path');
+const JavaScriptObfuscator = require('javascript-obfuscator');
 
 // Strip ALL HTML tags — returns plain text only
 function stripHtml(value) {
@@ -29,6 +32,27 @@ const MONGO_URI = process.env.MONGO_URI;
 const MASTER_KEY = process.env.DEV_KEY;
 const DURACAO_KEY = 12 * 60 * 60 * 1000;
 const IS_PROD = process.env.NODE_ENV === 'production';
+
+// --- LOAD & OBFUSCATE SCRIPT AT STARTUP ---
+let OBFUSCATED_SCRIPT = '';
+try {
+    const raw = fs.readFileSync(path.join(__dirname, 'Scripts', 'asfixy.js'), 'utf8');
+    OBFUSCATED_SCRIPT = JavaScriptObfuscator.obfuscate(raw, {
+        compact: true,
+        controlFlowFlattening: true,
+        controlFlowFlatteningThreshold: 0.5,
+        deadCodeInjection: true,
+        deadCodeInjectionThreshold: 0.2,
+        stringEncryption: true,
+        rotateStringArray: true,
+        shuffleStringArray: true,
+        splitStrings: true,
+        identifierNamesGenerator: 'hexadecimal'
+    }).getObfuscatedCode();
+    console.log('[Asfixy] Script loaded and obfuscated successfully.');
+} catch (e) {
+    console.error('[Asfixy] WARN: Could not load Scripts/asfixy.js:', e.message);
+}
 
 // --- ZOD SCHEMAS ---
 const keyHeaderSchema = z.object({
@@ -316,8 +340,7 @@ fastify.addHook('preHandler', async (request, reply) => {
             '/get-key',
             '/redeem',
             '/redeem-key',
-            '/admin',
-            '/script'
+            '/admin'
         ];
         if (request.method === 'OPTIONS') return;
         if (path === '/' || publicPaths.some(p => path.startsWith(p))) return;
@@ -1030,19 +1053,21 @@ fastify.post('/redeem-key', {
     }
 });
 
-// --- SCRIPT PROVIDER (unified) ---
+// --- SCRIPT PROVIDER (key-gated, served from memory) ---
 fastify.get('/script', async (request, reply) => {
-    try {
-        const url = `https://raw.githubusercontent.com/whylovehurts/asfixy-exec/refs/heads/main/src/asfixy.js`;
-        const response = await fetch(url);
-        if (!response.ok) throw new Error("Failed to fetch script");
+    // Validate key before serving
+    const userKey = request.headers['x-asfixy-key'] || request.query?.key;
+    if (!userKey) return reply.code(401).send('// Unauthorized');
 
-        const scriptContent = await response.text();
-        return reply.type('application/javascript').send(scriptContent);
-    } catch (err) {
-        if (!IS_PROD) console.error("Script fetch error:", err);
-        return reply.code(500).send("Error loading script");
+    if (userKey !== MASTER_KEY) {
+        const keyDoc = await KeyModel.findOne({ key: String(userKey).toLowerCase() })
+            .collation({ locale: 'en', strength: 2 }).lean();
+        if (!keyDoc) return reply.code(403).send('// Invalid key');
     }
+
+    if (!OBFUSCATED_SCRIPT) return reply.code(503).send('// Script unavailable');
+
+    return reply.type('application/javascript').send(OBFUSCATED_SCRIPT);
 });
 
 // --- DATA ROUTES ---
