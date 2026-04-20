@@ -608,10 +608,11 @@ fastify.get('/redeem', async (request, reply) => {
             <h1>Activation</h1>
             <p style="font-size: 0.8rem; opacity: 0.5;">Enter your key to lock it to this device.</p>
             <input type="text" id="keyInput" placeholder="Asfixy-XXXXXX">
-            <button onclick="redeem()">ACTIVATE DEVICE</button>
+            <button id="redeemBtn">ACTIVATE DEVICE</button>
             <div id="status"></div>
         </div>
         <script nonce="${getReqNonce(request)}">
+            document.getElementById('redeemBtn').addEventListener('click', redeem);
             async function redeem() {
                 const key = document.getElementById('keyInput').value;
                 const status = document.getElementById('status');
@@ -865,13 +866,13 @@ ${keyDoc.isPermanent
 
 <div class="title">ASFIXY ACCESS</div>
 
-<div class="key" id="key" onclick="copy()">${escapeHtml(keyDoc.key)}</div>
+<div class="key" id="key">${escapeHtml(keyDoc.key)}</div>
 
 ${keyDoc.isPermanent
                 ? '<div class="timer">INFINITY</div>'
                 : '<div class="timer" id="timer" data-ms="' + restanteMs + '">--:--</div>'}
 
-<button onclick="copy()">COPY KEY</button>
+<button id="copyBtn">COPY KEY</button>
 
 <div class="info">
 IP: ${escapeHtml(userIp)}<br>
@@ -887,6 +888,8 @@ function copy(){
     navigator.clipboard.writeText(document.getElementById('key').innerText);
     showToast("Key copied");
 }
+document.getElementById('copyBtn').addEventListener('click', copy);
+document.getElementById('key').addEventListener('click', copy);
 
 /* TOAST */
 function showToast(msg){
@@ -1027,17 +1030,10 @@ fastify.post('/redeem-key', {
     }
 });
 
-// --- SCRIPT PROVIDER ---
-fastify.get('/script/:name', async (request, reply) => {
-    const { name } = request.params;
-    const validScripts = ['main', 'dataloss', 'crash'];
-
-    if (!validScripts.includes(name)) {
-        return reply.code(404).send("Script not found");
-    }
-
+// --- SCRIPT PROVIDER (unified) ---
+fastify.get('/script', async (request, reply) => {
     try {
-        const url = `https://raw.githubusercontent.com/whylovehurts/asfixy-exec/refs/heads/main/src/${name}.js`;
+        const url = `https://raw.githubusercontent.com/whylovehurts/asfixy-exec/refs/heads/main/src/asfixy.js`;
         const response = await fetch(url);
         if (!response.ok) throw new Error("Failed to fetch script");
 
@@ -1201,12 +1197,12 @@ body{
 <div class="badge">● LIVE (${data.length})</div>
 </div>
 
-<input class="search" placeholder="Search bakery..." oninput="filter(this.value)">
+<input class="search" id="searchInput" placeholder="Search bakery...">
 
 <div class="grid" id="grid">
 ${data.map(f => `
 <div class="card" data-name="${escapeHtml(String(f.bakeryName ?? ''))}"> 
-    <button class="copy-btn" onclick="copySave('${escapeJs(f.saveKey || '')}')">COPY</button>
+    <button class="copy-btn" data-save="${escapeHtml(escapeJs(f.saveKey || ''))}">COPY</button>
     <div class="name">${escapeHtml(String(f.bakeryName ?? ''))}</div>
     <div class="row">Cookies: ${escapeHtml(String(f.cookies ?? 0))}</div>
     <div class="row">Prestige: ${escapeHtml(String(f.prestige ?? 0))}</div>
@@ -1225,6 +1221,7 @@ Realtime Farm Monitor • Asfixy Engine
 <div class="toast" id="toast">Save copied!</div>
 
 <script nonce="${getReqNonce(request)}">
+document.getElementById('searchInput').addEventListener('input', function(){ filter(this.value); });
 function filter(v){
     v = v.toLowerCase();
     document.querySelectorAll('.card').forEach(c=>{
@@ -1240,10 +1237,14 @@ function copySave(saveStr) {
         t.innerText = "Save copied!";
         t.classList.add('show');
         setTimeout(() => t.classList.remove('show'), 2000);
-    }).catch(err => {
-        alert("Failed to copy save.");
-    });
+    }).catch(() => { alert("Failed to copy save."); });
 }
+
+// Event delegation for dynamically rendered COPY buttons
+document.getElementById('grid').addEventListener('click', function(e) {
+    const btn = e.target.closest('.copy-btn[data-save]');
+    if (btn) copySave(btn.getAttribute('data-save'));
+});
 </script>
 
 </body>
@@ -1551,27 +1552,27 @@ canvas {
 
 
 
-<div class="card" onclick="go('/get-key')">
+<div class="card" data-href="/get-key">
 <h2>GET KEY</h2>
 <p>Generate instant acess key.</p>
 </div>
 
-<div class="card" onclick="go('/redeem')">
+<div class="card" data-href="/redeem">
 <h2>REDEEM</h2>
 <p>Activate IP-LOCK for Premium Keys.</p>
 </div>
 
-<div class="card" onclick="go('/status')">
+<div class="card" data-href="/status">
 <h2>FARM STATUS</h2>
 <p>View your live farms.</p>
 </div>
 
-<div class="card" onclick="go('/engine')">
+<div class="card" data-href="/engine">
 <h2>ENGINE</h2>
 <p>Execute scripts remotely.</p>
 </div>
 
-<div class="card" onclick="go('https://discord.gg/uSvZ5BJuJ4')">
+<div class="card" data-href="https://discord.gg/uSvZ5BJuJ4">
 <h2>DISCORD</h2>
 <p>Join ur updates server.</p>
 </div>
@@ -1586,11 +1587,18 @@ Asfixy Engine © 2026 • Premium System
 
 <div class="toast" id="toast">Copied!</div>
 
-<script nonce="${getReqNonce(req)}">
+<script nonce="${getReqNonce(request)}">
 setTimeout(()=>document.querySelector('.loader').style.display='none',800);
 
-/* NAV */
-function go(url){ window.open(url, '_self'); }
+/* NAV — wire cards via addEventListener (CSP blocks onclick attributes) */
+document.querySelectorAll('.card[data-href]').forEach(card => {
+    card.style.cursor = 'pointer';
+    card.addEventListener('click', () => {
+        const href = card.getAttribute('data-href');
+        if (href.startsWith('http')) window.open(href, '_blank');
+        else window.location.href = href;
+    });
+});
 
 /* TOAST */
 function toast(msg){
@@ -1862,9 +1870,9 @@ Game.Earn(1000000);
 </textarea>
 
 <div class="actions">
-<button onclick="execute()">EXECUTE</button>
-<button onclick="clearCode()">CLEAR</button>
-<button onclick="openGame()">OPEN GAME</button>
+<button id="btnExecute">EXECUTE</button>
+<button id="btnClear">CLEAR</button>
+<button id="btnOpenGame">OPEN GAME</button>
 </div>
 
 <div class="console" id="log"></div>
@@ -1874,11 +1882,16 @@ Game.Earn(1000000);
 <div class="toast" id="toast">Message</div>
 
 <script nonce="${getReqNonce(req)}">
+function showToast(msg, type = "error"){
     const t=document.getElementById('toast');
     t.innerText=msg;
     t.className = 'toast show ' + type;
     setTimeout(()=>t.classList.remove('show'), 3000);
 }
+
+document.getElementById('btnExecute').addEventListener('click', execute);
+document.getElementById('btnClear').addEventListener('click', clearCode);
+document.getElementById('btnOpenGame').addEventListener('click', openGame);
 
 function log(msg){
     const el = document.getElementById('log');
