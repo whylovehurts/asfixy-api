@@ -666,6 +666,15 @@ fastify.get('/redeem', async (request, reply) => {
     reply.type('text/html').send(html);
 });
 
+fastify.get('/key-info/:key', async (request, reply) => {
+    const k = await KeyModel.findOne({ key: request.params.key.toLowerCase() });
+    if (!k) return { valid: false };
+    if (k.isPermanent) return { valid: true, perm: true, ip: k.ip };
+    const ms = DURACAO_KEY - (Date.now() - k.createdAt.getTime());
+    if (ms <= 0) return { valid: false };
+    return { valid: true, perm: false, ms, ip: k.ip };
+});
+
 fastify.get('/get-key', async (request, reply) => {
     const userIp = getClientIp(request);
 
@@ -1480,23 +1489,63 @@ canvas {
     margin-top:10px;
 }
 
-/* STATS */
-.stats {
-    display:flex;
-    justify-content:center;
-    gap:30px;
-    margin:40px 0;
-}
-.stat {
+/* KEY DISPLAY */
+.key-container {
     text-align:center;
+    margin: 0 auto 50px auto;
+    background:var(--card);
+    backdrop-filter:blur(25px);
+    border:1px solid rgba(255,255,255,0.05);
+    padding:30px;
+    border-radius:24px;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    width:340px;
+    box-shadow:0 20px 60px rgba(0,0,0,0.5);
 }
-.stat h3 {
+.key-container .badge {
+    display:inline-block;
+    padding:6px 15px;
+    border-radius:20px;
+    font-size:0.65rem;
+    letter-spacing:1px;
+    border:1px solid rgba(255,255,255,0.1);
+    background:#111;
+    margin-bottom:15px;
+}
+.key-container h3 {
+    color:var(--accent);
+    font-size:1.2rem;
+    letter-spacing:3px;
+    margin-bottom:20px;
+}
+.key-container .key-val {
     font-size:1.5rem;
     color:var(--accent);
+    background:rgba(255,51,51,0.08);
+    border:1px solid rgba(255,51,51,0.2);
+    padding:15px 30px;
+    border-radius:14px;
+    margin-bottom:20px;
+    font-family:'Inter', sans-serif;
+    letter-spacing: 1px;
 }
-.stat p {
-    font-size:0.7rem;
-    opacity:0.5;
+.key-container .btn-get {
+    display:block;
+    width:100%;
+    padding:14px;
+    background:var(--accent);
+    color:#fff;
+    text-decoration:none;
+    border-radius:14px;
+    font-size:0.9rem;
+    font-weight:bold;
+    transition:0.3s;
+}
+.key-container .btn-get:hover {
+    transform:scale(1.03);
+    box-shadow:0 0 20px rgba(255,51,51,0.4);
 }
 
 /* BUTTON */
@@ -1629,9 +1678,46 @@ function copyApi(){
 const savedKey = localStorage.getItem('asfixy_key');
 const kd = document.getElementById('keyDisplay');
 if(savedKey) {
-    kd.innerHTML = '<h3>YOUR ACTIVE KEY</h3><div class="key-val">' + savedKey + '</div><p style="font-size:0.75rem;opacity:0.5;">Injected and ready</p>';
+    kd.innerHTML = `
+        <div class="badge">ACTIVE SESSION</div>
+        <h3>ASFIXY ACCESS</h3>
+        <div class="key-val" style="cursor:pointer;" onclick="navigator.clipboard.writeText('\${savedKey}');toast('Key copied!');">\${savedKey}</div>
+        <div id="keyTime" style="color:var(--accent);margin-bottom:20px;font-size:1.1rem;letter-spacing:2px;">Loading...</div>
+        <button class="btn-get" onclick="navigator.clipboard.writeText('\${savedKey}');toast('Key copied!');">COPY KEY</button>
+        <div style="font-size:0.7rem;opacity:0.5;margin-top:15px;" id="keyIp">IP: Checking...</div>
+    `;
+
+    fetch('/key-info/' + savedKey).then(r=>r.json()).then(d => {
+        if(!d.valid) {
+            kd.innerHTML = '<div class="badge" style="background:#ff3333;color:#fff;">EXPIRED</div><h3>SESSION ENDED</h3><a href="/get-key" class="btn-get">GET NEW KEY</a>';
+            localStorage.removeItem('asfixy_key');
+        } else {
+            document.getElementById('keyIp').innerText = 'IP: ' + (d.ip || 'Unknown');
+            if(d.perm) {
+                document.getElementById('keyTime').innerText = 'LIFETIME';
+            } else {
+                setInterval(()=>{
+                    d.ms -= 1000;
+                    if(d.ms <= 0) location.reload();
+                    let s = Math.floor(d.ms / 1000);
+                    let h = Math.floor(s / 3600);
+                    let m = Math.floor((s % 3600) / 60);
+                    let sec = s % 60;
+                    document.getElementById('keyTime').innerText = 
+                        h.toString().padStart(2, '0') + ':' + 
+                        m.toString().padStart(2, '0') + ':' + 
+                        sec.toString().padStart(2, '0');
+                }, 1000);
+            }
+        }
+    }).catch(()=>{});
 } else {
-    kd.innerHTML = '<h3>NO KEY DETECTED</h3><div class="key-val">---</div><a href="/get-key" class="btn-get">GET NEW KEY</a>';
+    kd.innerHTML = `
+        <div class="badge" style="opacity:0.5;">NO SESSION</div>
+        <h3>ASFIXY ACCESS</h3>
+        <div class="key-val" style="color:#555;border-color:rgba(255,255,255,0.1);background:rgba(0,0,0,0.5);">---</div>
+        <a href="/get-key" class="btn-get">GET NEW KEY</a>
+    `;
 }
 
 
@@ -1667,6 +1753,12 @@ draw();
 });
 
 let ENGINE_STATE = {};
+
+fastify.get('/engine/status', async (req, reply) => {
+    const key = req.headers['x-asfixy-key'];
+    if (!key || !ENGINE_STATE[key]) return { connected: false };
+    return { connected: Date.now() - ENGINE_STATE[key].lastPing < 5000 };
+});
 
 // pull request da extesao
 fastify.get('/engine/pull', async (req, reply) => {
@@ -1818,6 +1910,8 @@ gap:20px;
 max-width:1400px;
 margin:0 auto;
 width:100%;
+min-height:0;
+overflow:hidden;
 }
 
 /* EDITOR PANEL */
@@ -1829,6 +1923,7 @@ background:var(--card);
 border-radius:20px;
 border:1px solid rgba(255,255,255,0.05);
 overflow:hidden;
+min-height:0;
 }
 
 .panel-header{
@@ -1900,6 +1995,7 @@ background:var(--card);
 border-radius:20px;
 border:1px solid rgba(255,255,255,0.05);
 overflow:hidden;
+min-height:0;
 }
 
 .console{
@@ -2079,6 +2175,26 @@ function clearCode(){
     document.getElementById('code').value = "";
     log("Editor cleared.", "info");
 }
+
+let wasConnected = false;
+setInterval(async () => {
+    const key = localStorage.getItem("asfixy_key");
+    if (!key) return;
+    try {
+        const res = await fetch('/engine/status', {
+            headers: { 'x-asfixy-key': key }
+        });
+        const data = await res.json();
+        if (data.connected && !wasConnected) {
+            showToast("Injection Successful", "success");
+            log("Game connected to Asfixy Engine.", "success");
+            wasConnected = true;
+        } else if (!data.connected && wasConnected) {
+            wasConnected = false;
+            log("Game connection lost.", "error");
+        }
+    } catch(e) {}
+}, 2000);
 
 </script>
 
