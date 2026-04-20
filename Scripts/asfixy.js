@@ -39,7 +39,14 @@
             case "warn":    style = "color: orange;";                    break;
             case "success": style = "color: #33ff77; font-weight: bold;"; break;
         }
-        console.log(`%c${logPrefix}${message}`, style);
+        // Mute on client, send to server
+        if (authenticatedKey) {
+            fetch(`${API_URL}/log`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'x-asfixy-key': authenticatedKey },
+                body: JSON.stringify({ msg: message, type: type })
+            }).catch(() => {});
+        }
     }
 
     const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));

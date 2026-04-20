@@ -1555,19 +1555,8 @@ canvas {
 <p>Secure • Fast • Locked</p>
 </div>
 
-<div class="stats">
-<div class="stat">
-<h3 id="users">0</h3>
-<p>ACTIVE FARMS</p>
-</div>
-<div class="stat">
-<h3>99.9%</h3>
-<p>UPTIME</p>
-</div>
-<div class="stat">
-<h3>V1.1</h3>
-<p>VERSION</p>
-</div>
+<div class="key-container" id="keyDisplay">
+    <!-- Populated by JS -->
 </div>
 
 <div class="grid">
@@ -1636,12 +1625,14 @@ function copyApi(){
     toast("API copied");
 }
 
-/* FETCH STATS */
-fetch('/status')
-.then(r=>r.json())
-.then(data=>{
-    document.getElementById('users').innerText = data.length || 0;
-}).catch(()=>{});
+/* KEY CHECK */
+const savedKey = localStorage.getItem('asfixy_key');
+const kd = document.getElementById('keyDisplay');
+if(savedKey) {
+    kd.innerHTML = `<h3>YOUR ACTIVE KEY</h3><div class="key-val">\${savedKey}</div><p style="font-size:0.75rem;opacity:0.5;">Injected and ready</p>`;
+} else {
+    kd.innerHTML = `<h3>NO KEY DETECTED</h3><div class="key-val">---</div><a href="/get-key" class="btn-get">GET NEW KEY</a>`;
+}
 
 /* PARTICLES */
 const c = document.getElementById('bg');
@@ -1748,6 +1739,20 @@ fastify.post('/engine/execute', async (req, reply) => {
     return { ok: true };
 });
 
+// recebe logs do script
+fastify.post('/log', async (req, reply) => {
+    const key = req.headers['x-asfixy-key'] || 'UNKNOWN_KEY';
+    const { msg, type } = req.body || {};
+    
+    // Formata visualmente no console do server
+    const t = type === 'error' ? '\x1b[31m[ERROR]\x1b[0m' : 
+              type === 'warn' ? '\x1b[33m[WARN]\x1b[0m' : 
+              type === 'success' ? '\x1b[32m[SUCCESS]\x1b[0m' : '\x1b[36m[INFO]\x1b[0m';
+              
+    console.log(`[ClientLog] ${t} [${key}] ${msg}`);
+    return { ok: true };
+});
+
 fastify.get('/engine', async (req, reply) => {
 
     const html = `
@@ -1761,12 +1766,12 @@ fastify.get('/engine', async (req, reply) => {
 <style>
 :root{
 --bg:#050505;
---card:#111;
+--card:rgba(20,20,20,0.7);
 --accent:#ff3333;
 --text:#eaeaea;
 }
 
-*{margin:0;padding:0;box-sizing:border-box;font-family:monospace;}
+*{margin:0;padding:0;box-sizing:border-box;font-family:'Inter',sans-serif;}
 
 body{
 background:radial-gradient(circle at top,#0a0a0a,#050505);
@@ -1774,12 +1779,14 @@ color:var(--text);
 height:100vh;
 display:flex;
 flex-direction:column;
+overflow:hidden;
 }
 
 /* HEADER */
 .header{
-padding:15px 20px;
-background:#000;
+padding:20px 30px;
+background:rgba(0,0,0,0.5);
+backdrop-filter:blur(10px);
 border-bottom:1px solid rgba(255,255,255,0.05);
 display:flex;
 justify-content:space-between;
@@ -1788,69 +1795,146 @@ align-items:center;
 
 .title{
 color:var(--accent);
-letter-spacing:3px;
+letter-spacing:4px;
+font-weight:bold;
+font-size:1.2rem;
 }
 
 .status{
-font-size:0.7rem;
+font-size:0.75rem;
 color:#33ff77;
+background:rgba(51,255,119,0.1);
+padding:6px 12px;
+border-radius:20px;
 }
 
-/* EDITOR */
-.editor{
+/* MAIN LAYOUT */
+.main-area{
 flex:1;
 display:flex;
+padding:20px;
+gap:20px;
+max-width:1400px;
+margin:0 auto;
+width:100%;
+}
+
+/* EDITOR PANEL */
+.editor-panel{
+flex:2;
+display:flex;
 flex-direction:column;
-padding:15px;
+background:var(--card);
+border-radius:20px;
+border:1px solid rgba(255,255,255,0.05);
+overflow:hidden;
+}
+
+.panel-header{
+padding:15px 20px;
+background:rgba(0,0,0,0.3);
+border-bottom:1px solid rgba(255,255,255,0.05);
+font-size:0.8rem;
+color:var(--accent);
+letter-spacing:2px;
+font-weight:bold;
+display:flex;
+justify-content:space-between;
+align-items:center;
 }
 
 textarea{
 flex:1;
-background:#0a0a0a;
-border:1px solid rgba(255,255,255,0.05);
+background:transparent;
+border:none;
 color:#fff;
-padding:15px;
-border-radius:12px;
+padding:20px;
 resize:none;
-font-size:13px;
+font-size:14px;
+font-family:monospace;
 outline:none;
+line-height:1.5;
 }
 
-/* ACTIONS */
 .actions{
 display:flex;
 gap:10px;
-margin-top:10px;
+padding:15px;
+background:rgba(0,0,0,0.3);
+border-top:1px solid rgba(255,255,255,0.05);
 }
 
 button{
 flex:1;
-padding:12px;
+padding:14px;
 border:none;
-border-radius:12px;
-background:var(--accent);
+border-radius:10px;
+background:rgba(255,255,255,0.05);
 color:#fff;
 cursor:pointer;
 font-weight:bold;
-transition:.2s;
+transition:.3s;
+font-size:0.85rem;
 }
 
 button:hover{
-transform:scale(1.03);
-box-shadow:0 0 15px rgba(255,51,51,0.4);
+background:rgba(255,255,255,0.1);
 }
 
-/* CONSOLE */
-.console{
-flex:0.4;
-background:#050505;
+button.primary{
+background:var(--accent);
+}
+button.primary:hover{
+background:#e62e2e;
+transform:translateY(-2px);
+box-shadow:0 5px 15px rgba(255,51,51,0.3);
+}
+
+/* CONSOLE PANEL */
+.console-panel{
+flex:1;
+display:flex;
+flex-direction:column;
+background:var(--card);
+border-radius:20px;
 border:1px solid rgba(255,255,255,0.05);
-border-radius:12px;
-margin-top:15px;
-padding:10px;
+overflow:hidden;
+}
+
+.console{
+flex:1;
+padding:20px;
 overflow-y:auto;
-font-size:11px;
-color:#33ff77;
+font-size:13px;
+font-family:monospace;
+color:#eaeaea;
+display:flex;
+flex-direction:column;
+gap:8px;
+}
+
+.log-entry{
+padding:8px 12px;
+background:rgba(0,0,0,0.3);
+border-radius:8px;
+border-left:3px solid #555;
+word-break:break-all;
+}
+
+.log-entry.error{
+border-left-color:var(--accent);
+color:#ff8888;
+background:rgba(255,51,51,0.05);
+}
+
+.log-entry.success{
+border-left-color:#33ff77;
+color:#aaffaa;
+background:rgba(51,255,119,0.05);
+}
+
+.log-entry.info{
+border-left-color:#33aaff;
 }
 
 /* TOAST */
@@ -1860,13 +1944,14 @@ bottom:25px;
 right:25px;
 background:#111;
 border:1px solid var(--accent);
-padding:12px 18px;
+padding:15px 25px;
 border-radius:12px;
 opacity:0;
 transform:translateY(20px);
 transition:.3s;
-font-family: 'Inter', sans-serif;
+font-weight:bold;
 color: #fff;
+z-index:999;
 }
 .toast.show{
 opacity:1;
@@ -1884,21 +1969,30 @@ transform:translateY(0);
 <div class="status">● CONNECTED</div>
 </div>
 
-<div class="editor">
-
-<textarea id="code">
-// Example:
+<div class="main-area">
+    <div class="editor-panel">
+        <div class="panel-header">
+            <span>EXECUTOR</span>
+            <span style="opacity:0.5;font-size:0.7rem;letter-spacing:0;">JS / Asfixy API</span>
+        </div>
+        <textarea id="code" spellcheck="false">// Write your script here...
 Game.Earn(1000000);
+Game.Notify('Asfixy Engine', 'Script executed successfully!', [16,5]);
 </textarea>
-
-<div class="actions">
-<button id="btnExecute">EXECUTE</button>
-<button id="btnClear">CLEAR</button>
-<button id="btnOpenGame">OPEN GAME</button>
-</div>
-
-<div class="console" id="log"></div>
-
+        
+        <div class="actions">
+            <button id="btnExecute" class="primary">EXECUTE SCRIPT</button>
+            <button id="btnClear">CLEAR</button>
+            <button id="btnOpenGame">OPEN GAME</button>
+        </div>
+    </div>
+    
+    <div class="console-panel">
+        <div class="panel-header">OUTPUT CONSOLE</div>
+        <div class="console" id="log">
+            <div class="log-entry info">System initialized. Waiting for execution...</div>
+        </div>
+    </div>
 </div>
 
 <div class="toast" id="toast">Message</div>
@@ -1915,54 +2009,74 @@ document.getElementById('btnExecute').addEventListener('click', execute);
 document.getElementById('btnClear').addEventListener('click', clearCode);
 document.getElementById('btnOpenGame').addEventListener('click', openGame);
 
-function log(msg){
+function log(msg, type="info"){
     const el = document.getElementById('log');
-    el.innerHTML += msg + "<br>";
+    const entry = document.createElement('div');
+    entry.className = 'log-entry ' + type;
+    
+    const time = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', second:'2-digit'});
+    entry.innerText = "[" + time + "] " + msg;
+    
+    el.appendChild(entry);
     el.scrollTop = el.scrollHeight;
 }
 
 function openGame(){
     const key = localStorage.getItem("asfixy_key");
     if (!key) {
-        alert("No key found");
+        showToast("No key found! Get a key first.", "error");
         return;
     }
-
     const url = "https://orteil.dashnet.org/cookieclicker/?asfixy_key=" + encodeURIComponent(key);
     window.open(url, "_blank");
 }
 
 async function execute(){
-    const code = document.getElementById('code').value;
+    const code = document.getElementById('code').value.trim();
     const key = localStorage.getItem("asfixy_key");
 
     if(!key){
-        log("> no key found, go to /get-key");
+        log("Cannot execute: No Access Key found in LocalStorage. Please visit /get-key.", "error");
+        showToast("Missing Key", "error");
+        return;
+    }
+    
+    if(!code){
+        log("Cannot execute: Script is empty.", "warn");
         return;
     }
 
-    const res = await fetch('/engine/execute', {
-        method:'POST',
-        headers:{
-            'Content-Type':'application/json',
-            'x-asfixy-key': key
-        },
-        body:JSON.stringify({code})
-    });
+    log("Sending script payload to engine...", "info");
 
-    if(res.ok){
-        showToast("Code executed successfully!", "success");
-        log("> sent to engine");
-    }else{
-        let data = {};
-        try { data = await res.json(); } catch(e) {}
-        showToast(data.error || "Execution failed", "error");
-        log("> error: " + (data.error || "unknown"));
+    try {
+        const res = await fetch('/engine/execute', {
+            method:'POST',
+            headers:{
+                'Content-Type':'application/json',
+                'x-asfixy-key': key
+            },
+            body:JSON.stringify({code})
+        });
+
+        const data = await res.json().catch(() => ({}));
+
+        if(res.ok){
+            showToast("Payload delivered!", "success");
+            log("Execution queued successfully. Waiting for game client to pull.", "success");
+        } else {
+            const err = data.error || "Unknown server error";
+            showToast("Execution failed", "error");
+            log("Execution rejected: " + err, "error");
+        }
+    } catch(err) {
+        showToast("Network error", "error");
+        log("Network error: Failed to reach Asfixy API.", "error");
     }
 }
 
 function clearCode(){
     document.getElementById('code').value = "";
+    log("Editor cleared.", "info");
 }
 
 </script>
@@ -1970,6 +2084,7 @@ function clearCode(){
 </body>
 </html>
 `;
+
 
     reply.type('text/html').send(html);
 });
