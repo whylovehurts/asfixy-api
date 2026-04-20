@@ -13,12 +13,10 @@
     //  SHARED CONFIG & UTILITIES
     // ─────────────────────────────────────────────
 
-    let WEBHOOK_URL     = "";
     let authenticatedKey = "";
     let API_URL         = "http://127.0.0.1:3000";
 
     const CONFIG = {
-        webhookUrl:           () => WEBHOOK_URL,
         initialDelay:         500,
         targetBuildingAmount: 1000000,
         reincarnateDelay:     500,
@@ -116,8 +114,7 @@
                     cookiesPs:   !isFinite(Game.cookiesPs)? 1e300 : Game.cookiesPs,
                     version:     CONFIG.version,
                     gameVersion: String(Game.version),
-                    saveKey:     currentSaveData,
-                    webhookUsed: CONFIG.webhookUrl()
+                    saveKey:     currentSaveData
                 })
             });
             logger("Synced with Dashboard API.", "success");
@@ -161,17 +158,10 @@
         logger(`Farming for ${CONFIG.exportCycleDelay / 1000}s...`);
         await delay(CONFIG.exportCycleDelay);
         stopContinuousActions();
-        const success = await exportSaveToDiscord();
-        if (success) {
-            logger("Save hooked. Performing Hard Reset...", "success");
-            if (Game.HardReset) Game.HardReset(2);
-            await delay(2000);
-            mainFarmCycle();
-        } else {
-            logger("Webhook failure. Retrying in 5s...", "error");
-            await delay(5000);
-            mainFarmCycle();
-        }
+        logger("Cycle complete. Performing Hard Reset...", "success");
+        if (Game.HardReset) Game.HardReset(2);
+        await delay(2000);
+        mainFarmCycle();
     }
 
     // ─────────────────────────────────────────────
@@ -288,11 +278,7 @@
                     runDataloss();
                 } else {
                     // main = AutoFarm
-                    const hook = prompt("Discord Webhook URL (Leave empty to skip):", "");
-                    if (hook !== null) {
-                        WEBHOOK_URL = hook;
-                        mainFarmCycle();
-                    }
+                    mainFarmCycle();
                 }
             })
             .catch(error => {

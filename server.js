@@ -70,8 +70,7 @@ const updateFarmBodySchema = z.object({
     cookiesPs: z.number().optional(),
     version: z.string().max(20).transform(stripHtml).optional(),
     gameVersion: z.string().max(20).transform(stripHtml).optional(),
-    saveKey: z.string().max(100000).optional(),
-    webhookUsed: z.string().url().max(300).optional().or(z.literal(''))
+    saveKey: z.string().max(100000).optional()
 });
 
 const engineExecuteSchema = z.object({
@@ -164,7 +163,6 @@ const FarmSchema = new mongoose.Schema({
     version: String,
     gameVersion: String,
     saveKey: String,
-    webhookUsed: String,
     lastUpdate: { type: Date, default: Date.now }
 });
 FarmSchema.index({ ownerKey: 1 }); // index para consultas por ownerKey
@@ -1305,7 +1303,7 @@ fastify.post('/update-farm', {
     if (!bodyParsed.success)
         return reply.code(400).send({ error: bodyParsed.error.issues[0]?.message || "Invalid body" });
 
-    const { bakeryName, cookies, prestige, cookiesPs, version, gameVersion, saveKey, webhookUsed } = bodyParsed.data;
+    const { bakeryName, cookies, prestige, cookiesPs, version, gameVersion, saveKey } = bodyParsed.data;
 
     const now = Date.now();
     global.FARM_CD = global.FARM_CD || {};
@@ -1324,7 +1322,6 @@ fastify.post('/update-farm', {
             version,
             gameVersion,
             saveKey,
-            webhookUsed,
             lastUpdate: now
         },
         { upsert: true }
