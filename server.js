@@ -10,6 +10,24 @@ const fs = require('fs');
 const path = require('path');
 const JavaScriptObfuscator = require('javascript-obfuscator');
 
+// --- SRC MODULE IMPORTS ---
+// Using src/models for schemas (registered on require)
+require('./src/models');
+const { connectDatabase } = require('./src/config/database');
+const { PUBLIC_PATHS, DURACAO_KEY } = require('./src/lib/constants');
+const { MASTER_KEY, IS_PROD } = require('./src/config/env');
+const { getClientIp, isValidIp } = require('./src/lib/network');
+const { escapeHtml, escapeJs, generateNonce } = require('./src/lib/security');
+const { keyHeaderSchema, redeemBodySchema, updateFarmBodySchema, engineExecuteSchema, sanitizeInput } = require('./src/middleware/validation');
+const { authMiddleware } = require('./src/middleware/auth');
+
+// Note: Route handlers kept inline due to template literal issues with ${request.nonce}
+// Admin routes imported from src/routes/admin.js
+const { adminPageRoute, adminBanRoute, adminUnbanRoute, adminBulkCreateRoute, adminBulkDeleteRoute, adminResetIpRoute, adminEditFullRoute, adminRevokeKeyRoute, adminCreateKeyRoute } = require('./src/routes/admin');
+
+// Import models from src
+const { KeyModel, FarmModel, BanModel, LogModel } = require('./src/models');
+
 // Strip ALL HTML tags — returns plain text only
 function stripHtml(value) {
     if (typeof value !== 'string') return value;
@@ -18,20 +36,8 @@ function stripHtml(value) {
 
 require('dotenv').config();
 
-// --- ENV FAIL-SAFE: halt if critical vars are missing ---
-const REQUIRED_ENV = ['SIGN_SECRET', 'MONGO_URI', 'DEV_KEY'];
-for (const key of REQUIRED_ENV) {
-    if (!process.env[key]) {
-        console.error(`[FATAL] Missing required environment variable: ${key}. Halting.`);
-        process.exit(1);
-    }
-}
-
-const SIGN_SECRET = process.env.SIGN_SECRET;
-const MONGO_URI = process.env.MONGO_URI;
-const MASTER_KEY = process.env.DEV_KEY;
-const DURACAO_KEY = 12 * 60 * 60 * 1000;
-const IS_PROD = process.env.NODE_ENV === 'production';
+// --- ENV VARIABLES (imported from src/config/env.js) ---
+const { MONGO_URI, SIGN_SECRET } = require('./src/config/env');
 
 // --- LOAD & OBFUSCATE SCRIPT AT STARTUP ---
 let OBFUSCATED_SCRIPT = '';
@@ -54,60 +60,10 @@ try {
     console.error('[Asfixy] WARN: Could not load Scripts/asfixy.js:', e.message);
 }
 
-// --- ZOD SCHEMAS ---
-const keyHeaderSchema = z.object({
-    'x-asfixy-key': z.string().min(1).max(100).regex(/^[\w\-\.]+$/, 'Invalid key format')
-}).passthrough();
-
-const redeemBodySchema = z.object({
-    key: z.string().min(1).max(100).regex(/^[\w\-\.]+$/, 'Invalid key format')
-});
-
-const updateFarmBodySchema = z.object({
-    bakeryName: z.string().min(1).max(50).transform(stripHtml),
-    cookies: z.number().finite().optional(),
-    prestige: z.number().finite().optional(),
-    cookiesPs: z.number().optional(),
-    version: z.string().max(20).transform(stripHtml).optional(),
-    gameVersion: z.string().max(20).transform(stripHtml).optional(),
-    saveKey: z.string().max(100000).optional()
-});
-
-const engineExecuteSchema = z.object({
-    code: z.string().min(1).max(5000)
-});
+// Note: Zod schemas are now imported from src/middleware/validation
 
 // Helper para o Node.js renderizar o tempo inicial no servidor
-function formatTimeServer(ms) {
-    if (ms < 0) return "INFINITY";
-    let s = Math.floor(ms / 1000);
-    let h = Math.floor(s / 3600);
-    let m = Math.floor((s % 3600) / 60);
-    let sec = s % 60;
-    return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`;
-}
-
-function escapeHtml(str = "") {
-    return str
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#039;");
-}
-
-// Helper para escapar strings em atributos JS (onclick, etc)
-function escapeJs(str = "") {
-    return str.replace(/[\\'"<>&]/g, c => ({
-        '\\': '\\\\', "'": "\\'", '"': '\\"',
-        '<': '\\x3c', '>': '\\x3e', '&': '\\x26'
-    }[c]));
-}
-
-// Helper para IP consistente
-function getClientIp(request) {
-    return request.headers['x-forwarded-for']?.split(',')[0]?.trim() || request.ip;
-}
+// Note: escapeHtml, escapeJs, getClientIp are imported from src/lib/
 
 function verifySignature(req) {
     const key = req.headers['x-asfixy-key'];
@@ -144,49 +100,8 @@ mongoose.connect(MONGO_URI).then(async () => {
     }
 });
 
-// --- SCHEMAS ---
-const KeySchema = new mongoose.Schema({
-    ip: { type: String, default: "MANUAL" },
-    key: { type: String, required: true, unique: true },
-    isPermanent: { type: Boolean, default: false },
-    createdAt: { type: Date, default: Date.now }
-});
-KeySchema.index({ createdAt: 1 }, { expireAfterSeconds: 43200, partialFilterExpression: { isPermanent: false } });
-const KeyModel = mongoose.model('Key', KeySchema);
-
-const FarmSchema = new mongoose.Schema({
-    ownerKey: { type: String, required: true },
-    bakeryName: { type: String, required: true },
-    cookies: Number,
-    prestige: Number,
-    cookiesPs: Number,
-    version: String,
-    gameVersion: String,
-    saveKey: String,
-    lastUpdate: { type: Date, default: Date.now }
-});
-FarmSchema.index({ ownerKey: 1 }); // index para consultas por ownerKey
-const FarmModel = mongoose.model('Farm', FarmSchema);
-
-const BanSchema = new mongoose.Schema({
-    ip: String,
-    key: String,
-    reason: String,
-    createdAt: { type: Date, default: Date.now }
-});
-
-const BanModel = mongoose.model('Ban', BanSchema);
-
-const LogSchema = new mongoose.Schema({
-    ip: String,
-    key: String,
-    route: String,
-    method: String,
-    status: Number,
-    createdAt: { type: Date, default: Date.now }
-});
-
-const LogModel = mongoose.model('Log', LogSchema);
+// Note: Models are now imported from src/models (KeyModel, FarmModel, BanModel, LogModel)
+// Models are registered with mongoose when src/models/index.js is required
 
 // --- NONCE GENERATOR (per-request, used by Helmet CSP) ---
 const NONCE_MAP = new WeakMap();
@@ -213,6 +128,7 @@ fastify.register(require('@fastify/helmet'), {
 fastify.addHook('onRequest', async (req, reply) => {
     const nonce = crypto.randomBytes(16).toString('base64');
     NONCE_MAP.set(req, nonce);
+    req.nonce = nonce; // Make available to routes
     // Override the script-src after helmet sets the header
     reply.header(
         'Content-Security-Policy',
@@ -249,17 +165,7 @@ fastify.register(require('@fastify/rate-limit'), {
     keyGenerator: (req) => req.ip
 });
 
-// --- NOSQL SANITIZER: strip MongoDB operators from all user input ---
-function sanitizeInput(obj) {
-    if (typeof obj !== 'object' || obj === null) return;
-    for (const key of Object.keys(obj)) {
-        if (key.startsWith('$') || key.includes('.')) {
-            delete obj[key];
-        } else {
-            sanitizeInput(obj[key]);
-        }
-    }
-}
+// Note: sanitizeInput is imported from src/middleware/validation
 
 fastify.addHook('preHandler', async (req) => {
     if (req.body && typeof req.body === 'object') sanitizeInput(req.body);
@@ -401,465 +307,16 @@ fastify.addHook('onResponse', async (req, reply) => {
 });
 
 // --- ADMIN PANEL (PAGINATION & UI) ---
-fastify.get('/admin', async (request, reply) => {
-    if (request.query.key !== MASTER_KEY) return reply.code(403).send("DENIED");
-
-    const rawPage = parseInt(request.query.page) || 1;
-    const page = Math.max(1, rawPage);
-    const limit = 10;
-    const skip = (page - 1) * limit;
-
-    const totalKeys = await KeyModel.countDocuments();
-    const allKeys = await KeyModel.find({}).sort({ createdAt: -1 }).skip(skip).limit(limit);
-    const totalPages = Math.ceil(totalKeys / limit) || 1;
-
-    const keysData = allKeys.map(k => {
-        const ms = DURACAO_KEY - (Date.now() - k.createdAt.getTime());
-        return { key: k.key, ip: k.ip, isPermanent: k.isPermanent, timeLeft: k.isPermanent ? -1 : Math.max(0, ms) };
-    });
-
-    const html = `
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Asfixy Admin</title>
-        <style>
-            :root {
-                --bg: #050505;
-                --card: rgba(20, 20, 20, 0.6);
-                --accent: #ff3333;
-                --accent-soft: rgba(255, 51, 51, 0.15);
-                --text: #eaeaea;
-                --success: #33ff77;
-            }
-            * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Inter', sans-serif; }
-            body { background: radial-gradient(circle at top, #0a0a0a, #050505); color: var(--text); min-height: 100vh; padding: 40px 20px; overflow-y: auto; }
-            .container { max-width: 1100px; margin: 0 auto; }
-            
-            .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 40px; }
-            .logo { font-size: 1.5rem; font-weight: bold; letter-spacing: 4px; color: var(--accent); }
-            .btn { background: var(--accent); color: #fff; padding: 12px 24px; border-radius: 12px; border: none; font-weight: bold; cursor: pointer; transition: 0.3s; font-size: 0.9rem; }
-            .btn:hover { transform: scale(1.05); box-shadow: 0 0 20px rgba(255,51,51,0.4); }
-            .btn-outline { background: transparent; border: 1px solid var(--accent); color: var(--accent); }
-            .btn-outline:hover { background: var(--accent-soft); }
-
-            .panel { background: var(--card); backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.05); border-radius: 24px; padding: 30px; box-shadow: 0 20px 50px rgba(0,0,0,0.8); overflow-x: auto; }
-            
-            table { width: 100%; border-collapse: collapse; min-width: 700px; }
-            th { text-align: left; padding: 15px; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 2px; color: #888; border-bottom: 1px solid rgba(255,255,255,0.05); }
-            td { padding: 18px 15px; border-bottom: 1px solid rgba(255,255,255,0.02); vertical-align: middle; }
-            tr:hover { background: rgba(255,255,255,0.02); }
-            
-            .key-title { font-size: 1.1rem; font-weight: bold; color: var(--accent); margin-bottom: 4px; display: inline-block; }
-            .key-ip { font-size: 0.8rem; opacity: 0.5; font-family: monospace; }
-            .badge { display: inline-block; padding: 6px 12px; border-radius: 20px; font-size: 0.7rem; font-weight: bold; letter-spacing: 1px; }
-            .badge.perm { background: rgba(255,51,51,0.1); color: var(--accent); border: 1px solid var(--accent-soft); }
-            .badge.temp { background: rgba(51,255,119,0.1); color: var(--success); border: 1px solid rgba(51,255,119,0.2); }
-            
-            .actions { display: flex; gap: 10px; }
-            .btn-sm { padding: 8px 14px; font-size: 0.75rem; border-radius: 8px; border: none; cursor: pointer; transition: 0.2s; font-weight: bold; }
-            .btn-sm.edit { background: rgba(255,255,255,0.05); color: #fff; }
-            .btn-sm.edit:hover { background: rgba(255,255,255,0.1); }
-            .btn-sm.reset { background: rgba(51,255,119,0.1); color: var(--success); }
-            .btn-sm.reset:hover { background: rgba(51,255,119,0.2); }
-            .btn-sm.revoke { background: rgba(255,51,51,0.1); color: var(--accent); }
-            .btn-sm.revoke:hover { background: rgba(255,51,51,0.2); }
-
-            .pagination { display: flex; justify-content: space-between; align-items: center; margin-top: 30px; }
-            .page-info { font-size: 0.9rem; opacity: 0.6; }
-
-            /* MODAL */
-            .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(5px); display: flex; justify-content: center; align-items: center; opacity: 0; pointer-events: none; transition: 0.3s; z-index: 100; }
-            .modal-overlay.active { opacity: 1; pointer-events: all; }
-            .modal { background: #111; border: 1px solid rgba(255,51,51,0.2); border-radius: 20px; padding: 30px; width: 90%; max-width: 400px; transform: translateY(20px); transition: 0.3s; }
-            .modal-overlay.active .modal { transform: translateY(0); }
-            .modal h2 { color: var(--accent); margin-bottom: 20px; font-size: 1.3rem; letter-spacing: 2px; text-transform: uppercase; }
-            .input-group { margin-bottom: 20px; }
-            .input-group label { display: block; font-size: 0.8rem; margin-bottom: 8px; opacity: 0.7; }
-            .input-group input { width: 100%; padding: 12px; background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.1); color: #fff; border-radius: 10px; font-family: 'Inter', sans-serif; outline: none; }
-            .input-group input:focus { border-color: var(--accent); }
-            .input-group input[type="checkbox"] { width: auto; transform: scale(1.3); margin-left: 5px; }
-            .modal-actions { display: flex; justify-content: flex-end; gap: 10px; }
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <div class="header">
-                <div class="logo">ASFIXY ADMIN</div>
-                <div style="display:flex; gap:15px;">
-                    <button class="btn btn-outline" id="btnBulk">BULK CREATE</button>
-                    <button class="btn btn-outline" style="border-color:var(--accent); color:var(--accent);" id="btnBulkDelete">BULK DELETE</button>
-                    <button class="btn" id="btnCreate">+ NEW KEY</button>
-                </div>
-            </div>
-
-            <div class="panel">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Access Key & IP</th>
-                            <th>Status</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${keysData.map(item => `
-                        <tr>
-                            <td>
-                                <div class="key-title">${escapeHtml(item.key)}</div><br>
-                                <div class="key-ip">${escapeHtml(item.ip)}</div>
-                            </td>
-                            <td>
-                                ${item.isPermanent
-            ? '<div class="badge perm">PERMANENT</div>'
-            : '<div class="badge temp timer" data-ms="' + item.timeLeft + '">' + formatTimeServer(item.timeLeft) + '</div>'}
-                            </td>
-                            <td class="actions">
-                                <button class="btn-sm edit act-btn" data-act="edit" data-key="${escapeHtml(item.key)}">EDIT</button>
-                                <button class="btn-sm reset act-btn" data-act="reset-ip" data-key="${escapeHtml(item.key)}">RESET IP</button>
-                                <button class="btn-sm revoke act-btn" data-act="revoke-key" data-key="${escapeHtml(item.key)}">REVOKE</button>
-                            </td>
-                        </tr>
-                        `).join('')}
-                    </tbody>
-                </table>
-
-                <div class="pagination">
-                    <button class="btn-sm edit" id="btnPrevPage" data-page="${page - 1}" ${page <= 1 ? 'disabled style="opacity:0.3"' : ''}>&laquo; PREV</button>
-                    <div class="page-info">PAGE ${page} OF ${totalPages}</div>
-                    <button class="btn-sm edit" id="btnNextPage" data-page="${page + 1}" ${page >= totalPages ? 'disabled style="opacity:0.3"' : ''}>NEXT &raquo;</button>
-                </div>
-            </div>
-        </div>
-
-        <!-- GLOBAL MODAL -->
-        <div class="modal-overlay" id="modalOverlay">
-            <div class="modal">
-                <h2 id="modalTitle">Title</h2>
-                <div id="modalBody"></div>
-                <div class="modal-actions">
-                    <button class="btn-sm edit" id="btnModalCancel">CANCEL</button>
-                    <button class="btn-sm revoke" id="modalConfirmBtn" style="background:var(--accent); color:#fff;">CONFIRM</button>
-                </div>
-            </div>
-        </div>
-
-        <script nonce="${getReqNonce(request)}">
-            const MASTER_KEY = "${request.query.key}";
-            const modalOverlay = document.getElementById('modalOverlay');
-            const modalTitle = document.getElementById('modalTitle');
-            const modalBody = document.getElementById('modalBody');
-            const modalConfirmBtn = document.getElementById('modalConfirmBtn');
-            let currentAction = null;
-
-            function formatTime(ms) {
-                if (ms < 0) return "PERMANENT";
-                let s = Math.floor(ms / 1000);
-                return Math.floor(s/3600).toString().padStart(2,'0') + ":" + Math.floor((s%3600)/60).toString().padStart(2,'0') + ":" + (s%60).toString().padStart(2,'0');
-            }
-
-            setInterval(() => {
-                document.querySelectorAll('.timer').forEach(td => {
-                    let ms = parseInt(td.getAttribute('data-ms'));
-                    if (ms > 0) { ms -= 1000; td.setAttribute('data-ms', ms); td.innerText = formatTime(ms); }
-                });
-            }, 1000);
-
-            function changePage(p) { window.location.href = '/admin?key='+MASTER_KEY+'&page='+p; }
-
-            function closeModal() {
-                modalOverlay.classList.remove('active');
-            }
-
-            function openModal(type, targetKey = '') {
-                currentAction = { type, targetKey };
-
-                if (type === 'create') {
-                    modalTitle.innerText = "CREATE NEW KEY";
-                    modalBody.innerHTML = \`
-                        <div class="input-group">
-                            <label>Custom Name (Optional)</label>
-                            <input type="text" id="m_name" placeholder="Leave empty for random">
-                        </div>
-                        <div class="input-group" style="display:flex; align-items:center;">
-                            <label style="margin:0;">Permanent Key?</label>
-                            <input type="checkbox" id="m_perm">
-                        </div>
-                    \`;
-                } else if (type === 'bulk') {
-                    modalTitle.innerText = "BULK CREATE KEYS";
-                    modalBody.innerHTML = \`
-                        <div class="input-group">
-                            <label>Amount (1-100)</label>
-                            <input type="number" id="m_amount" value="10" min="1" max="100">
-                        </div>
-                        <div class="input-group" style="display:flex; align-items:center;">
-                            <label style="margin:0;">Permanent Keys?</label>
-                            <input type="checkbox" id="m_perm">
-                        </div>
-                    \`;
-                } else if (type === 'bulk-delete') {
-                    modalTitle.innerText = "BULK DELETE KEYS";
-                    modalBody.innerHTML = \`
-                        <div class="input-group">
-                            <label>Delete criteria</label>
-                            <select id="m_del_type" style="width: 100%; padding: 12px; background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.1); color: #fff; border-radius: 10px; font-family: 'Inter', sans-serif; outline: none; margin-bottom: 10px;">
-                                <option value="all">Delete All Keys</option>
-                                <option value="name">Delete by Name</option>
-                                <option value="ip">Delete by IP</option>
-                                <option value="no-ip">Keys without IP (MANUAL)</option>
-                                <option value="permanent">All Permanent Keys</option>
-                                <option value="timed">All Timed Keys</option>
-                            </select>
-                        </div>
-                        <div class="input-group" id="m_del_val_group" style="display:none;">
-                            <label>Value (Name or IP)</label>
-                            <input type="text" id="m_del_val" placeholder="Enter name or IP...">
-                        </div>
-                    \`;
-                    setTimeout(() => {
-                        document.getElementById('m_del_type').addEventListener('change', (e) => {
-                            const val = e.target.value;
-                            document.getElementById('m_del_val_group').style.display = (val === 'name' || val === 'ip') ? 'block' : 'none';
-                        });
-                    }, 50);
-                } else if (type === 'edit') {
-                    modalTitle.innerText = "EDIT KEY";
-                    modalBody.innerHTML = \`
-                        <div class="input-group">
-                            <label>New Name</label>
-                            <input type="text" id="m_name" value="\${targetKey}">
-                        </div>
-                        <div class="input-group">
-                            <label>Reset to Hours (0 to keep current)</label>
-                            <input type="number" id="m_hours" value="0" min="0">
-                        </div>
-                    \`;
-                }
-                modalOverlay.classList.add('active');
-            }
-
-            async function executeModalAction() {
-                let endpoint = '';
-                let payload = {};
-
-                if (currentAction.type === 'create') {
-                    endpoint = '/admin/create-key';
-                    payload = { customName: document.getElementById('m_name').value, permanent: document.getElementById('m_perm').checked };
-                } else if (currentAction.type === 'bulk') {
-                    endpoint = '/admin/bulk-create';
-                    payload = { amount: parseInt(document.getElementById('m_amount').value), permanent: document.getElementById('m_perm').checked };
-                } else if (currentAction.type === 'bulk-delete') {
-                    endpoint = '/admin/bulk-delete';
-                    payload = { 
-                        type: document.getElementById('m_del_type').value, 
-                        value: document.getElementById('m_del_val') ? document.getElementById('m_del_val').value : '' 
-                    };
-                } else if (currentAction.type === 'edit') {
-                    endpoint = '/admin/edit-full';
-                    payload = { targetKey: currentAction.targetKey, newName: document.getElementById('m_name').value, hours: parseInt(document.getElementById('m_hours').value) };
-                }
-
-                modalConfirmBtn.innerText = "WAIT...";
-                modalConfirmBtn.disabled = true;
-
-                try {
-                    await fetch(endpoint + '?key=' + MASTER_KEY, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(payload)
-                    });
-                    location.reload();
-                } catch(e) {
-                    alert("Error executing action");
-                    closeModal();
-                    modalConfirmBtn.innerText = "CONFIRM";
-                    modalConfirmBtn.disabled = false;
-                }
-            }
-
-            async function action(type, targetKey) {
-                if (!confirm("Are you sure you want to perform this action on " + targetKey + "?")) return;
-                try {
-                    await fetch('/admin/' + type + '?key=' + MASTER_KEY, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ targetKey })
-                    });
-                    location.reload();
-                } catch(e) { alert("Action failed"); }
-            }
-
-            /* Event Listeners */
-            document.getElementById('btnBulk').addEventListener('click', () => openModal('bulk'));
-            document.getElementById('btnBulkDelete').addEventListener('click', () => openModal('bulk-delete'));
-            document.getElementById('btnCreate').addEventListener('click', () => openModal('create'));
-            document.getElementById('btnModalCancel').addEventListener('click', closeModal);
-            modalConfirmBtn.addEventListener('click', executeModalAction);
-            
-            const btnPrev = document.getElementById('btnPrevPage');
-            if(btnPrev && !btnPrev.hasAttribute('disabled')) btnPrev.addEventListener('click', () => changePage(btnPrev.getAttribute('data-page')));
-            
-            const btnNext = document.getElementById('btnNextPage');
-            if(btnNext && !btnNext.hasAttribute('disabled')) btnNext.addEventListener('click', () => changePage(btnNext.getAttribute('data-page')));
-
-            document.querySelectorAll('.act-btn').forEach(btn => {
-                btn.addEventListener('click', () => {
-                    const act = btn.getAttribute('data-act');
-                    const k = btn.getAttribute('data-key');
-                    if (act === 'edit') openModal('edit', k);
-                    else action(act, k);
-                });
-            });
-        </script>
-    </body>
-    </html>`;
-    reply.type('text/html').send(html);
-});
-
-fastify.post('/admin/ban', async (r, rp) => {
-    if (r.query.key !== MASTER_KEY) return rp.code(403).send();
-
-    await BanModel.create({
-        ip: r.body.ip || null,
-        key: r.body.key || null,
-        reason: r.body.reason || "manual"
-    });
-
-    return { success: true };
-});
-
-// --- ADMIN ACTIONS ---
-fastify.post('/admin/bulk-create', async (r, rp) => {
-    if (r.query.key !== MASTER_KEY) return rp.code(403).send();
-
-    const amount = Math.min(100, Math.max(1, parseInt(r.body.amount) || 1));
-
-    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-    const keys = [];
-
-    for (let i = 0; i < amount; i++) {
-        let rand = "";
-        for (let j = 0; j < 10; j++)
-            rand += chars[Math.floor(Math.random() * chars.length)];
-
-        keys.push({
-            key: `asfixy-${rand.toLowerCase()}`,
-            isPermanent: !!r.body.permanent,
-            ip: "MANUAL"
-        });
-    }
-
-    await KeyModel.insertMany(keys);
-    return { success: true };
-});
-
-fastify.post('/admin/bulk-delete', async (r, rp) => {
-    if (r.query.key !== MASTER_KEY) return rp.code(403).send();
-    
-    const type = r.body.type;
-    const value = String(r.body.value || "").trim();
-    let query = {};
-
-    switch(type) {
-        case 'all': query = {}; break;
-        case 'name': 
-            if(!value) return rp.code(400).send({error:"Value required"});
-            query = { key: value.toLowerCase() };
-            break;
-        case 'ip':
-            if(!value) return rp.code(400).send({error:"Value required"});
-            query = { ip: value };
-            break;
-        case 'no-ip': query = { ip: "MANUAL" }; break;
-        case 'permanent': query = { isPermanent: true }; break;
-        case 'timed': query = { isPermanent: false }; break;
-        default: return rp.code(400).send({error:"Invalid type"});
-    }
-
-    try {
-        const result = await KeyModel.deleteMany(query).collation({ locale: 'en', strength: 2 });
-        return { success: true, deleted: result.deletedCount };
-    } catch(e) {
-        return rp.code(500).send({ error: e.message });
-    }
-});
-
-fastify.post('/admin/reset-ip', async (r, rp) => {
-    if (r.query.key !== MASTER_KEY) return rp.code(403).send();
-    const targetKey = String(r.body.targetKey || "").toLowerCase();
-    await KeyModel.updateOne({ key: targetKey }, { ip: "MANUAL" })
-        .collation({ locale: 'en', strength: 2 });
-    return { success: true };
-});
-
-fastify.post('/admin/edit-full', async (r, rp) => {
-    if (r.query.key !== MASTER_KEY) return rp.code(403).send();
-
-    const { targetKey, newName, hours } = r.body;
-
-    if (!targetKey || typeof targetKey !== 'string') return rp.code(400).send();
-
-    const update = {};
-
-    if (newName && typeof newName === 'string' && newName.length <= 50)
-        update.key = newName.toLowerCase();
-
-    const h = parseInt(hours);
-    if (!isNaN(h) && h > 0) {
-        update.createdAt = new Date(Date.now() - (DURACAO_KEY - (h * 3600000)));
-    }
-
-    await KeyModel.updateOne({ key: targetKey.toLowerCase() }, update)
-        .collation({ locale: 'en', strength: 2 });
-
-    return { success: true };
-});
-
-fastify.post('/admin/revoke-key', async (r, rp) => {
-    if (r.query.key !== MASTER_KEY) return rp.code(403).send();
-    const targetKey = String(r.body.targetKey || "").toLowerCase();
-    await KeyModel.deleteOne({ key: targetKey })
-        .collation({ locale: 'en', strength: 2 });
-    return { success: true };
-});
-
-fastify.post('/admin/create-key', async (r, rp) => {
-    if (r.query.key !== MASTER_KEY) return rp.code(403).send();
-
-    let name = String(r.body.customName || "").trim();
-    if (name.length > 50) return rp.code(400).send({ error: "Invalid name" });
-
-    // Validate key format (alphanumeric, dash, dot only)
-    if (name && !/^[\w\-.]+$/.test(name)) {
-        return rp.code(400).send({ error: "Invalid name" });
-    }
-
-    if (!name) {
-        const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-        for (let j = 0; j < 10; j++) name += chars[Math.floor(Math.random() * chars.length)];
-        name = "asfixy-" + name.toLowerCase();
-    } else {
-        name = name.toLowerCase();
-    }
-
-    try {
-        await KeyModel.create({
-            ip: "MANUAL",
-            key: name,
-            isPermanent: !!r.body.permanent
-        });
-    } catch (e) {
-        if (e.code === 11000) {
-            return { success: true }; // Key already exists, consider it a success
-        }
-        throw e;
-    }
-
-    return { success: true };
-});
+// Imported from src/routes/admin.js
+fastify.get('/admin', adminPageRoute);
+fastify.post('/admin/ban', adminBanRoute);
+fastify.post('/admin/unban', adminUnbanRoute);
+fastify.post('/admin/bulk-create', adminBulkCreateRoute);
+fastify.post('/admin/bulk-delete', adminBulkDeleteRoute);
+fastify.post('/admin/reset-ip', adminResetIpRoute);
+fastify.post('/admin/edit-full', adminEditFullRoute);
+fastify.post('/admin/revoke-key', adminRevokeKeyRoute);
+fastify.post('/admin/create-key', adminCreateKeyRoute);
 
 fastify.get('/redeem', async (request, reply) => {
     const html = `

@@ -1,4 +1,3 @@
-.gitignore
 node_modules/
 Scripts/*
 !Scripts/asfixy.js
@@ -6,3 +5,5 @@ tests/
 Some Utils/
 bot.py
 .env
+skill.md
+skill-log.md
