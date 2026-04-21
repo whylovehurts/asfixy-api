@@ -339,13 +339,13 @@ fastify.addHook('preHandler', async (request, reply) => {
             '/redeem',
             '/redeem-key',
             '/admin',
-            '/download',        // redirect público, sem auth
-            '/key-info',        // informação de key é pública
-            '/engine/status',   // usa validação interna por header
-            '/engine/pull',     // usa validação interna por header (extensão do jogo)
-            '/engine/execute',  // usa validação interna por Zod + KeyModel
-            '/script',          // usa validação interna própria
-            '/log'              // aceita sem key (usa UNKNOWN_KEY)
+            '/download',
+            '/key-info',
+            '/engine/status',
+            '/engine/pull',
+            '/engine/execute',
+            '/script',
+            '/log'
         ];
         if (request.method === 'OPTIONS') return;
         if (path === '/' || publicPaths.some(p => path.startsWith(p))) return;
@@ -404,7 +404,8 @@ fastify.addHook('onResponse', async (req, reply) => {
 fastify.get('/admin', async (request, reply) => {
     if (request.query.key !== MASTER_KEY) return reply.code(403).send("DENIED");
 
-    const page = parseInt(request.query.page) || 1;
+    const rawPage = parseInt(request.query.page) || 1;
+    const page = Math.max(1, rawPage);
     const limit = 10;
     const skip = (page - 1) * limit;
 
@@ -489,6 +490,7 @@ fastify.get('/admin', async (request, reply) => {
                 <div class="logo">ASFIXY ADMIN</div>
                 <div style="display:flex; gap:15px;">
                     <button class="btn btn-outline" id="btnBulk">BULK CREATE</button>
+                    <button class="btn btn-outline" style="border-color:var(--accent); color:var(--accent);" id="btnBulkDelete">BULK DELETE</button>
                     <button class="btn" id="btnCreate">+ NEW KEY</button>
                 </div>
             </div>
@@ -598,6 +600,31 @@ fastify.get('/admin', async (request, reply) => {
                             <input type="checkbox" id="m_perm">
                         </div>
                     \`;
+                } else if (type === 'bulk-delete') {
+                    modalTitle.innerText = "BULK DELETE KEYS";
+                    modalBody.innerHTML = \`
+                        <div class="input-group">
+                            <label>Delete criteria</label>
+                            <select id="m_del_type" style="width: 100%; padding: 12px; background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.1); color: #fff; border-radius: 10px; font-family: 'Inter', sans-serif; outline: none; margin-bottom: 10px;">
+                                <option value="all">Delete All Keys</option>
+                                <option value="name">Delete by Name</option>
+                                <option value="ip">Delete by IP</option>
+                                <option value="no-ip">Keys without IP (MANUAL)</option>
+                                <option value="permanent">All Permanent Keys</option>
+                                <option value="timed">All Timed Keys</option>
+                            </select>
+                        </div>
+                        <div class="input-group" id="m_del_val_group" style="display:none;">
+                            <label>Value (Name or IP)</label>
+                            <input type="text" id="m_del_val" placeholder="Enter name or IP...">
+                        </div>
+                    \`;
+                    setTimeout(() => {
+                        document.getElementById('m_del_type').addEventListener('change', (e) => {
+                            const val = e.target.value;
+                            document.getElementById('m_del_val_group').style.display = (val === 'name' || val === 'ip') ? 'block' : 'none';
+                        });
+                    }, 50);
                 } else if (type === 'edit') {
                     modalTitle.innerText = "EDIT KEY";
                     modalBody.innerHTML = \`
@@ -624,6 +651,12 @@ fastify.get('/admin', async (request, reply) => {
                 } else if (currentAction.type === 'bulk') {
                     endpoint = '/admin/bulk-create';
                     payload = { amount: parseInt(document.getElementById('m_amount').value), permanent: document.getElementById('m_perm').checked };
+                } else if (currentAction.type === 'bulk-delete') {
+                    endpoint = '/admin/bulk-delete';
+                    payload = { 
+                        type: document.getElementById('m_del_type').value, 
+                        value: document.getElementById('m_del_val') ? document.getElementById('m_del_val').value : '' 
+                    };
                 } else if (currentAction.type === 'edit') {
                     endpoint = '/admin/edit-full';
                     payload = { targetKey: currentAction.targetKey, newName: document.getElementById('m_name').value, hours: parseInt(document.getElementById('m_hours').value) };
@@ -661,6 +694,7 @@ fastify.get('/admin', async (request, reply) => {
 
             /* Event Listeners */
             document.getElementById('btnBulk').addEventListener('click', () => openModal('bulk'));
+            document.getElementById('btnBulkDelete').addEventListener('click', () => openModal('bulk-delete'));
             document.getElementById('btnCreate').addEventListener('click', () => openModal('create'));
             document.getElementById('btnModalCancel').addEventListener('click', closeModal);
             modalConfirmBtn.addEventListener('click', executeModalAction);
@@ -722,6 +756,37 @@ fastify.post('/admin/bulk-create', async (r, rp) => {
     return { success: true };
 });
 
+fastify.post('/admin/bulk-delete', async (r, rp) => {
+    if (r.query.key !== MASTER_KEY) return rp.code(403).send();
+    
+    const type = r.body.type;
+    const value = String(r.body.value || "").trim();
+    let query = {};
+
+    switch(type) {
+        case 'all': query = {}; break;
+        case 'name': 
+            if(!value) return rp.code(400).send({error:"Value required"});
+            query = { key: value.toLowerCase() };
+            break;
+        case 'ip':
+            if(!value) return rp.code(400).send({error:"Value required"});
+            query = { ip: value };
+            break;
+        case 'no-ip': query = { ip: "MANUAL" }; break;
+        case 'permanent': query = { isPermanent: true }; break;
+        case 'timed': query = { isPermanent: false }; break;
+        default: return rp.code(400).send({error:"Invalid type"});
+    }
+
+    try {
+        const result = await KeyModel.deleteMany(query).collation({ locale: 'en', strength: 2 });
+        return { success: true, deleted: result.deletedCount };
+    } catch(e) {
+        return rp.code(500).send({ error: e.message });
+    }
+});
+
 fastify.post('/admin/reset-ip', async (r, rp) => {
     if (r.query.key !== MASTER_KEY) return rp.code(403).send();
     const targetKey = String(r.body.targetKey || "").toLowerCase();
@@ -735,11 +800,11 @@ fastify.post('/admin/edit-full', async (r, rp) => {
 
     const { targetKey, newName, hours } = r.body;
 
-    if (!targetKey) return rp.code(400).send();
+    if (!targetKey || typeof targetKey !== 'string') return rp.code(400).send();
 
     const update = {};
 
-    if (newName && newName.length <= 50)
+    if (newName && typeof newName === 'string' && newName.length <= 50)
         update.key = newName.toLowerCase();
 
     const h = parseInt(hours);
@@ -767,6 +832,11 @@ fastify.post('/admin/create-key', async (r, rp) => {
     let name = String(r.body.customName || "").trim();
     if (name.length > 50) return rp.code(400).send({ error: "Invalid name" });
 
+    // Validate key format (alphanumeric, dash, dot only)
+    if (name && !/^[\w\-.]+$/.test(name)) {
+        return rp.code(400).send({ error: "Invalid name" });
+    }
+
     if (!name) {
         const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
         for (let j = 0; j < 10; j++) name += chars[Math.floor(Math.random() * chars.length)];
@@ -775,11 +845,18 @@ fastify.post('/admin/create-key', async (r, rp) => {
         name = name.toLowerCase();
     }
 
-    await KeyModel.create({
-        ip: "MANUAL",
-        key: name,
-        isPermanent: !!r.body.permanent
-    });
+    try {
+        await KeyModel.create({
+            ip: "MANUAL",
+            key: name,
+            isPermanent: !!r.body.permanent
+        });
+    } catch (e) {
+        if (e.code === 11000) {
+            return { success: true }; // Key already exists, consider it a success
+        }
+        throw e;
+    }
 
     return { success: true };
 });
@@ -1943,8 +2020,11 @@ fastify.get('/engine/pull', async (req, reply) => {
 
     ENGINE_STATE[key].lastPing = Date.now();
 
+    const code = ENGINE_STATE[key].code || null;
+    ENGINE_STATE[key].code = null;
+
     return {
-        code: ENGINE_STATE[key].code || null,
+        code: code,
         updatedAt: ENGINE_STATE[key].updatedAt || 0
     };
 });
@@ -1978,11 +2058,9 @@ fastify.post('/engine/execute', async (req, reply) => {
         return reply.code(400).send({ error: "Game is not open or extension is not installed/connected!" });
     }
 
-    // cooldown por execução
-    if (
-        ENGINE_STATE[key] &&
-        Date.now() - ENGINE_STATE[key].updatedAt < 3000
-    ) {
+    // cooldown por execução (separado do lastPing para evitar conflito)
+    const lastExecute = ENGINE_STATE[key].lastExecute || 0;
+    if (Date.now() - lastExecute < 3000) {
         return reply.code(429).send({ error: "Cooldown" });
     }
 
@@ -1999,7 +2077,7 @@ fastify.post('/engine/execute', async (req, reply) => {
     }
 
     ENGINE_STATE[key].history.push(Date.now());
-
+    ENGINE_STATE[key].lastExecute = Date.now(); // Separate from updatedAt to avoid conflict with ping check
     ENGINE_STATE[key].code = code;
     ENGINE_STATE[key].updatedAt = Date.now();
 
