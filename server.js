@@ -338,7 +338,14 @@ fastify.addHook('preHandler', async (request, reply) => {
             '/get-key',
             '/redeem',
             '/redeem-key',
-            '/admin'
+            '/admin',
+            '/download',        // redirect público, sem auth
+            '/key-info',        // informação de key é pública
+            '/engine/status',   // usa validação interna por header
+            '/engine/pull',     // usa validação interna por header (extensão do jogo)
+            '/engine/execute',  // usa validação interna por Zod + KeyModel
+            '/script',          // usa validação interna própria
+            '/log'              // aceita sem key (usa UNKNOWN_KEY)
         ];
         if (request.method === 'OPTIONS') return;
         if (path === '/' || publicPaths.some(p => path.startsWith(p))) return;
@@ -361,12 +368,14 @@ fastify.addHook('preHandler', async (request, reply) => {
             return sendError(reply, request, 403, "Redeem key first", "Please redeem your key to lock it to this device.");
         }
 
-        if (keyDoc.ip !== request.ip)
+        // Keys permanentes não precisam de IP match (podem ser usadas de qualquer lugar)
+        if (!keyDoc.isPermanent && keyDoc.ip !== request.ip)
             return sendError(reply, request, 401, "IP Mismatch", "This key is registered to another device.");
 
+        const clientIp = getClientIp(request);
         const banned = await BanModel.findOne({
             $or: [
-                { ip: request.ip },
+                { ip: clientIp },
                 { key: userKey }
             ]
         }).lean();
