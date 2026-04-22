@@ -319,62 +319,10 @@ fastify.post('/admin/revoke-key', adminRevokeKeyRoute);
 fastify.post('/admin/create-key', adminCreateKeyRoute);
 
 fastify.get('/redeem', async (request, reply) => {
-    const html = `
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Asfixy - Redeem Key</title>
-        <style>
-            :root { --bg: #0a0a0a; --card: #141414; --accent: #ff3333; --text: #e0e0e0; }
-            body { background: var(--bg); color: var(--text); font-family: 'Inter', sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }
-            .container { width: 90%; max-width: 400px; background: var(--card); border: 1px solid rgba(255,51,51,0.1); border-radius: 24px; padding: 40px; box-shadow: 0 20px 50px rgba(0,0,0,0.8); text-align: center; }
-            h1 { font-size: 1.2rem; letter-spacing: 3px; color: var(--accent); text-transform: uppercase; margin-bottom: 20px; }
-            input { width: 100%; padding: 12px; background: #0a0a0a; border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; color: #fff; margin-bottom: 20px; box-sizing: border-box; text-align: center; }
-            button { width: 100%; background: var(--accent); color: #fff; border: none; padding: 12px; border-radius: 12px; font-weight: bold; cursor: pointer; transition: 0.3s; }
-            button:hover { transform: scale(1.02); opacity: 0.9; }
-            #status { margin-top: 20px; font-size: 0.8rem; }
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <h1>Activation</h1>
-            <p style="font-size: 0.8rem; opacity: 0.5;">Enter your key to lock it to this device.</p>
-            <input type="text" id="keyInput" placeholder="asfixy-XXXXXX">
-            <button id="redeemBtn">ACTIVATE DEVICE</button>
-            <div id="status"></div>
-        </div>
-        <script nonce="${getReqNonce(request)}">
-            document.getElementById('redeemBtn').addEventListener('click', redeem);
-            async function redeem() {
-                const key = document.getElementById('keyInput').value;
-                const status = document.getElementById('status');
-                status.innerText = "Processing...";
-                
-                try {
-                    const res = await fetch('/redeem-key', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ key })
-                    });
-                    let data;
-                    try {
-                        data = await res.json();
-                    } catch {
-                        throw new Error("Invalid response");
-                    }
-                    if (data.valid) {
-                        status.style.color = "#33ff77";
-                        status.innerText = "SUCCESS: " + (data.msg || "Device Authorized");
-                    } else {
-                        status.style.color = "#ff3333";
-                        status.innerText = "ERROR: " + (data.reason || "Invalid Key");
-                    }
-                } catch (e) { status.innerText = "Connection Error"; }
-            }
-        </script>
-    </body>
-    </html>`;
+    const templateLoader = require('./src/lib/templateLoader');
+    const html = templateLoader.render('redeem', {
+        NONCE: getReqNonce(request)
+    });
     reply.type('text/html').send(html);
 });
 
@@ -391,7 +339,6 @@ fastify.get('/get-key', async (request, reply) => {
     const userIp = getClientIp(request);
 
     try {
-        // 1. checa key permanente já existente nesse IP
         let permKey = await KeyModel.findOne({
             ip: userIp,
             isPermanent: true
@@ -402,29 +349,24 @@ fastify.get('/get-key', async (request, reply) => {
         let restanteMs;
 
         if (permKey) {
-            // key permanente existente
             keyDoc = permKey;
-            restanteMs = -1; // infinito
+            restanteMs = -1;
         } else {
-            // 2. checa se já existe key temporária válida
             let existing = await KeyModel.findOne({ ip: userIp });
 
             if (existing && !existing.isPermanent) {
                 const ms = DURACAO_KEY - (Date.now() - existing.createdAt.getTime());
 
                 if (ms > 0) {
-                    // key ainda valida, mostra ela
                     keyDoc = existing;
                     restanteMs = ms;
                     isNew = false;
                 } else {
-                    // key expirada, deleta e cria nova
                     await KeyModel.deleteOne({ _id: existing._id });
                     existing = null;
                 }
             }
 
-            // 3. se nao tem key valida, gera nova
             if (!keyDoc) {
                 const chars = "123579";
                 let rand = "";
@@ -446,255 +388,49 @@ fastify.get('/get-key', async (request, reply) => {
 
         const expiresMin = Math.ceil(restanteMs / 60000);
 
-        const html = `
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Asfixy Key</title>
+        const templateLoader = require('./src/lib/templateLoader');
 
-<style>
-:root{
-    --bg:#050505;
-    --card:rgba(20,20,20,0.6);
-    --accent:#ff3333;
-    --accent-soft:rgba(255,51,51,0.15);
-    --text:#eaeaea;
-    --success:#33ff77;
-}
+        let badge, timer, timerScript, expiryText;
 
-*{margin:0;padding:0;box-sizing:border-box;font-family:'Inter',sans-serif;}
-
-body{
-    background:radial-gradient(circle at top,#0a0a0a,#050505);
-    color:var(--text);
-    height:100vh;
-    display:flex;
-    justify-content:center;
-    align-items:center;
-    overflow:hidden;
-}
-
-/* PARTICLES */
-canvas{
-    position:fixed;
-    inset:0;
-    z-index:-1;
-}
-
-/* CARD */
-.container{
-    width:90%;
-    max-width:420px;
-    background:var(--card);
-    backdrop-filter:blur(25px);
-    border-radius:24px;
-    padding:35px;
-    border:1px solid rgba(255,255,255,0.05);
-    box-shadow:0 20px 60px rgba(0,0,0,0.8);
-    text-align:center;
-    animation:fadeIn .6s ease;
-}
-
-@keyframes fadeIn{
-    from{opacity:0;transform:translateY(20px);}
-    to{opacity:1;transform:translateY(0);}
-}
-
-/* HEADER */
-.title{
-    letter-spacing:4px;
-    font-size:1.2rem;
-    color:var(--accent);
-}
-
-/* BADGE */
-.badge{
-    display:inline-block;
-    margin-bottom:10px;
-    padding:6px 12px;
-    border-radius:20px;
-    font-size:0.65rem;
-    letter-spacing:1px;
-}
-
-.new{background:var(--success);color:#000;}
-.old{background:#111;border:1px solid rgba(255,255,255,0.1);}
-.perm{background:var(--accent);color:#fff;}
-
-/* KEY BOX */
-.key{
-    margin:25px 0;
-    font-size:1.6rem;
-    color:var(--accent);
-    background:rgba(255,51,51,0.08);
-    border:1px solid rgba(255,51,51,0.2);
-    padding:12px;
-    border-radius:14px;
-    cursor:pointer;
-    transition:.2s;
-}
-.key:hover{
-    background:rgba(255,51,51,0.15);
-    transform:scale(1.03);
-}
-
-/* TIMER */
-.timer{
-    margin-top:10px;
-    font-size:1rem;
-    color:var(--accent);
-    letter-spacing:2px;
-}
-
-/* BUTTON */
-button{
-    margin-top:20px;
-    width:100%;
-    padding:12px;
-    border:none;
-    border-radius:14px;
-    background:var(--accent);
-    color:#fff;
-    font-weight:bold;
-    cursor:pointer;
-    transition:.25s;
-}
-button:hover{
-    transform:scale(1.03);
-    box-shadow:0 0 20px rgba(255,51,51,0.4);
-}
-
-/* INFO */
-.info{
-    margin-top:15px;
-    font-size:0.7rem;
-    opacity:0.5;
-    line-height:1.6;
-}
-
-/* TOAST */
-.toast{
-    position:fixed;
-    bottom:25px;
-    right:25px;
-    background:#111;
-    border:1px solid var(--accent);
-    padding:12px 18px;
-    border-radius:12px;
-    opacity:0;
-    transform:translateY(20px);
-    transition:.3s;
-}
-.toast.show{
-    opacity:1;
-    transform:translateY(0);
-}
-</style>
-</head>
-
-<body>
-
-<canvas id="bg"></canvas>
-
-<div class="container">
-
-${keyDoc.isPermanent
-                ? '<div class="badge perm">PERMANENT KEY</div>'
-                : (isNew
-                    ? '<div class="badge new">NEW KEY GENERATED</div>'
-                    : '<div class="badge old">ACTIVE SESSION</div>')}
-
-<div class="title">ASFIXY ACCESS</div>
-
-<div class="key" id="key">${escapeHtml(keyDoc.key)}</div>
-
-${keyDoc.isPermanent
-                ? '<div class="timer">INFINITY</div>'
-                : '<div class="timer" id="timer" data-ms="' + restanteMs + '">--:--</div>'}
-
-<button id="copyBtn">COPY KEY</button>
-
-<div class="info">
-IP: ${escapeHtml(userIp)}<br>
-${keyDoc.isPermanent ? 'Never expires' : 'Expires in ' + expiresMin + ' min'}
-</div>
-
-</div>
-
-<div class="toast" id="toast">Copied</div>
-
-<script nonce="${getReqNonce(request)}">
-function copy(){
-    navigator.clipboard.writeText(document.getElementById('key').innerText);
-    showToast("Key copied");
-}
-document.getElementById('copyBtn').addEventListener('click', copy);
-document.getElementById('key').addEventListener('click', copy);
-
-/* TOAST */
-function showToast(msg){
-    const t=document.getElementById('toast');
-    t.innerText=msg;
-    t.classList.add('show');
-    setTimeout(()=>t.classList.remove('show'),2000);
-}
-
-/* TIMER */
+        if (keyDoc.isPermanent) {
+            badge = '<div class="badge perm">PERMANENT KEY</div>';
+            timer = '<div class="timer">INFINITY</div>';
+            timerScript = '';
+            expiryText = 'Never expires';
+        } else {
+            if (isNew) {
+                badge = '<div class="badge new">NEW KEY GENERATED</div>';
+            } else {
+                badge = '<div class="badge old">ACTIVE SESSION</div>';
+            }
+            timer = `<div class="timer" id="timer" data-ms="${restanteMs}">--:--</div>`;
+            timerScript = `
 function update(){
     const el=document.getElementById('timer');
-    if(!el) return; // permanent keys dont have timer
-    
+    if(!el) return;
     let ms=parseInt(el.dataset.ms);
-
     if(ms<=0){el.innerText="EXPIRED";return;}
-
     ms-=1000;
     el.dataset.ms=ms;
-
     const h=Math.floor(ms/3600000);
     const m=Math.floor((ms%3600000)/60000);
     const s=Math.floor((ms%60000)/1000);
-
-    el.innerText=
-        h.toString().padStart(2,'0')+":"+
-        m.toString().padStart(2,'0')+":"+
-        s.toString().padStart(2,'0');
+    el.innerText=h.toString().padStart(2,'0')+":"+m.toString().padStart(2,'0')+":"+s.toString().padStart(2,'0');
 }
 setInterval(update,1000);
-update();
+update();`;
+            expiryText = `Expires in ${expiresMin} min`;
+        }
 
-/* PARTICLES */
-const c=document.getElementById('bg');
-const ctx=c.getContext('2d');
-c.width=innerWidth;
-c.height=innerHeight;
-
-let p=[];
-for(let i=0;i<70;i++){
-    p.push({x:Math.random()*c.width,y:Math.random()*c.height,v:Math.random()*0.6});
-}
-
-function draw(){
-    ctx.clearRect(0,0,c.width,c.height);
-    ctx.fillStyle='rgba(255,51,51,0.2)';
-    p.forEach(e=>{
-        e.y+=e.v;
-        if(e.y>c.height)e.y=0;
-        ctx.fillRect(e.x,e.y,2,2);
-    });
-    requestAnimationFrame(draw);
-}
-draw();
-
-localStorage.setItem("asfixy_key", document.getElementById("key").innerText);
-
-</script>
-
-</body>
-</html>
-`;
+        const html = templateLoader.render('get-key', {
+            NONCE: getReqNonce(request),
+            KEY: escapeHtml(keyDoc.key),
+            BADGE: badge,
+            TIMER: timer,
+            USER_IP: escapeHtml(userIp),
+            EXPIRY_TEXT: expiryText,
+            TIMER_SCRIPT: timerScript
+        });
 
         reply.setCookie('asfixy_key', keyDoc.key, {
             path: '/',
@@ -796,155 +532,12 @@ fastify.get('/status', async (request, reply) => {
 
     const data = await FarmModel.find(query).select('-_id -__v');
 
-    // Se for request de API (fetch, bot, etc)
     if (request.headers.accept?.includes('application/json')) {
         return data;
     }
 
-    // UI PREMIUM
-    const html = `
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Saves Storage</title>
-
-<style>
-:root {
-    --bg:#050505;
-    --card:rgba(20,20,20,0.7);
-    --accent:#ff3333;
-    --text:#eaeaea;
-}
-
-*{margin:0;padding:0;box-sizing:border-box;font-family:'Inter',sans-serif;}
-
-body{
-    background:radial-gradient(circle at top,#0a0a0a,#050505);
-    color:var(--text);
-    padding:30px;
-}
-
-/* HEADER */
-.header{
-    display:flex;
-    justify-content:space-between;
-    margin-bottom:30px;
-}
-.title{
-    color:var(--accent);
-    letter-spacing:3px;
-}
-.badge{
-    color:#33ff77;
-    font-size:0.7rem;
-}
-
-/* GRID */
-.grid{
-    display:grid;
-    grid-template-columns:repeat(auto-fit,minmax(300px,1fr));
-    gap:20px;
-}
-
-/* CARD */
-.card{
-    position: relative;
-    background:var(--card);
-    backdrop-filter:blur(20px);
-    padding:20px;
-    border-radius:18px;
-    border:1px solid rgba(255,255,255,0.05);
-    transition:0.3s;
-}
-.card:hover{
-    border-color:var(--accent);
-    transform:translateY(-5px);
-}
-
-/* COPY BTN */
-.copy-btn {
-    position: absolute;
-    top: 20px;
-    right: 20px;
-    background: rgba(255,51,51,0.1);
-    border: 1px solid rgba(255,51,51,0.3);
-    color: var(--accent);
-    padding: 4px 10px;
-    border-radius: 8px;
-    font-size: 0.65rem;
-    font-weight: bold;
-    cursor: pointer;
-    transition: 0.2s;
-}
-.copy-btn:hover {
-    background: var(--accent);
-    color: #fff;
-}
-
-/* TEXT */
-.name{
-    font-weight:bold;
-    color:var(--accent);
-}
-.row{
-    font-size:0.75rem;
-    opacity:0.7;
-    margin-top:5px;
-}
-
-/* SEARCH */
-.search{
-    width:100%;
-    padding:10px;
-    border-radius:10px;
-    border:none;
-    margin-bottom:20px;
-    background:#111;
-    color:#fff;
-}
-
-/* FOOTER */
-.footer{
-    text-align:center;
-    margin-top:40px;
-    font-size:0.7rem;
-    opacity:0.3;
-}
-
-/* TOAST */
-.toast{
-    position:fixed;
-    bottom:25px;
-    right:25px;
-    background:#111;
-    border:1px solid var(--accent);
-    padding:12px 18px;
-    border-radius:12px;
-    opacity:0;
-    transform:translateY(20px);
-    transition:.3s;
-    pointer-events:none;
-}
-.toast.show{
-    opacity:1;
-    transform:translateY(0);
-}
-</style>
-</head>
-
-<body>
-
-<div class="header">
-<div class="title">ASFIXY STATUS</div>
-<div class="badge">● LIVE (${data.length})</div>
-</div>
-
-<input class="search" id="searchInput" placeholder="Search bakery...">
-
-<div class="grid" id="grid">
-${data.map(f => `
+    const templateLoader = require('./src/lib/templateLoader');
+    const cardsHtml = data.map(f => `
 <div class="card" data-name="${escapeHtml(String(f.bakeryName ?? ''))}"> 
     <button class="copy-btn" data-save="${escapeHtml(escapeJs(f.saveKey || ''))}">COPY</button>
     <div class="name">${escapeHtml(String(f.bakeryName ?? ''))}</div>
@@ -954,46 +547,13 @@ ${data.map(f => `
     <div class="row">Version: ${escapeHtml(String(f.version ?? '?'))}</div>
     <div class="row">Game: ${escapeHtml(String(f.gameVersion ?? '?'))}</div>
     <div class="row">Last Update: ${escapeHtml(new Date(f.lastUpdate).toLocaleString())}</div>
-</div>
-`).join('')}
-</div>
+</div>`).join('');
 
-<div class="footer">
-Realtime Farm Monitor • Asfixy Engine
-</div>
-
-<div class="toast" id="toast">Save copied!</div>
-
-<script nonce="${getReqNonce(request)}">
-document.getElementById('searchInput').addEventListener('input', function(){ filter(this.value); });
-function filter(v){
-    v = v.toLowerCase();
-    document.querySelectorAll('.card').forEach(c=>{
-        const name = c.getAttribute('data-name').toLowerCase();
-        c.style.display = name.includes(v) ? 'block' : 'none';
+    const html = templateLoader.render('status', {
+        NONCE: getReqNonce(request),
+        COUNT: data.length,
+        CARDS: cardsHtml
     });
-}
-
-function copySave(saveStr) {
-    if (!saveStr) return;
-    navigator.clipboard.writeText(saveStr).then(() => {
-        const t = document.getElementById('toast');
-        t.innerText = "Save copied!";
-        t.classList.add('show');
-        setTimeout(() => t.classList.remove('show'), 2000);
-    }).catch(() => { alert("Failed to copy save."); });
-}
-
-// Event delegation for dynamically rendered COPY buttons
-document.getElementById('grid').addEventListener('click', function(e) {
-    const btn = e.target.closest('.copy-btn[data-save]');
-    if (btn) copySave(btn.getAttribute('data-save'));
-});
-</script>
-
-</body>
-</html>
-    `;
 
     reply.type('text/html').send(html);
 });
@@ -1053,410 +613,10 @@ fastify.post('/update-farm', {
 
 fastify.get('/download', async (r, rp) => rp.redirect('https://gofile.io/d/9c8Wlb'));
 fastify.get('/', async (request, reply) => {
-    const html = `
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Asfixy</title>
-
-<style>
-:root {
-    --bg: #050505;
-    --card: rgba(20,20,20,0.7);
-    --accent: #ff3333;
-    --accent-soft: rgba(255,51,51,0.15);
-    --text: #eaeaea;
-}
-
-* {margin:0;padding:0;box-sizing:border-box;font-family:'Inter',sans-serif;}
-
-body {
-    background: radial-gradient(circle at top, #0a0a0a, #050505);
-    color: var(--text);
-    overflow-x:hidden;
-}
-
-/* LOADER */
-.loader {
-    position:fixed;
-    inset:0;
-    background:#000;
-    display:flex;
-    justify-content:center;
-    align-items:center;
-    z-index:9999;
-}
-.loader span {
-    color:var(--accent);
-    font-size:1.2rem;
-    letter-spacing:4px;
-    animation:pulse 1s infinite;
-}
-@keyframes pulse {
-    0%{opacity:0.3;}
-    50%{opacity:1;}
-    100%{opacity:0.3;}
-}
-
-/* PARTICLES */
-canvas {
-    position:fixed;
-    inset:0;
-    z-index:-1;
-}
-
-/* CONTAINER */
-.container {
-    max-width:1200px;
-    margin:auto;
-    padding:40px 20px;
-}
-
-/* HEADER */
-.header {
-    display:flex;
-    justify-content:space-between;
-    align-items:center;
-    margin-bottom:40px;
-}
-
-.logo {
-    font-size:1.4rem;
-    letter-spacing:4px;
-    color:var(--accent);
-}
-
-.status {
-    background:rgba(51,255,119,0.1);
-    color:#33ff77;
-    padding:6px 14px;
-    border-radius:20px;
-    font-size:0.7rem;
-}
-
-/* HERO */
-.hero {
-    text-align:center;
-    margin-bottom:50px;
-}
-.hero h1 {
-    font-size:2.5rem;
-}
-.hero span {
-    color:var(--accent);
-}
-.hero p {
-    opacity:0.5;
-    font-size:0.9rem;
-    margin-top:10px;
-}
-
-/* GRID */
-.grid {
-    display:grid;
-    grid-template-columns:repeat(auto-fit,minmax(230px,1fr));
-    gap:20px;
-}
-
-/* CARD */
-.card {
-    background:var(--card);
-    backdrop-filter:blur(20px);
-    border-radius:20px;
-    padding:25px;
-    border:1px solid rgba(255,255,255,0.05);
-    transition:0.3s;
-    cursor:pointer;
-    position:relative;
-    overflow:hidden;
-}
-
-.card::after {
-    content:'';
-    position:absolute;
-    inset:0;
-    background:linear-gradient(120deg, transparent, rgba(255,51,51,0.2), transparent);
-    opacity:0;
-    transition:0.3s;
-}
-
-.card:hover {
-    transform:translateY(-6px) scale(1.02);
-    border-color:var(--accent);
-}
-.card:hover::after {
-    opacity:1;
-}
-
-.card h2 {
-    font-size:0.85rem;
-    letter-spacing:2px;
-    color:var(--accent);
-}
-.card p {
-    font-size:0.75rem;
-    opacity:0.6;
-    margin-top:10px;
-}
-
-/* KEY DISPLAY */
-.key-container {
-    text-align:center;
-    margin: 0 auto 50px auto;
-    background:var(--card);
-    backdrop-filter:blur(25px);
-    border:1px solid rgba(255,255,255,0.05);
-    padding:30px;
-    border-radius:24px;
-    display:flex;
-    flex-direction:column;
-    align-items:center;
-    width:340px;
-    box-shadow:0 20px 60px rgba(0,0,0,0.5);
-}
-.key-container .badge {
-    display:inline-block;
-    padding:6px 15px;
-    border-radius:20px;
-    font-size:0.65rem;
-    letter-spacing:1px;
-    border:1px solid rgba(255,255,255,0.1);
-    background:#111;
-    margin-bottom:15px;
-}
-.key-container h3 {
-    color:var(--accent);
-    font-size:1.2rem;
-    letter-spacing:3px;
-    margin-bottom:20px;
-}
-.key-container .key-val {
-    font-size:1.5rem;
-    color:var(--accent);
-    background:rgba(255,51,51,0.08);
-    border:1px solid rgba(255,51,51,0.2);
-    padding:15px 30px;
-    border-radius:14px;
-    margin-bottom:20px;
-    font-family:'Inter', sans-serif;
-    letter-spacing: 1px;
-}
-.key-container .btn-get {
-    display:block;
-    width:100%;
-    padding:14px;
-    background:var(--accent);
-    color:#fff;
-    text-decoration:none;
-    border-radius:14px;
-    font-size:0.9rem;
-    font-weight:bold;
-    transition:0.3s;
-}
-.key-container .btn-get:hover {
-    transform:scale(1.03);
-    box-shadow:0 0 20px rgba(255,51,51,0.4);
-}
-
-/* BUTTON */
-.btn {
-    margin-top:10px;
-    padding:10px;
-    border-radius:12px;
-    border:none;
-    background:var(--accent);
-    color:#fff;
-    cursor:pointer;
-}
-
-/* TOAST */
-.toast {
-    position:fixed;
-    bottom:20px;
-    right:20px;
-    background:#111;
-    border:1px solid var(--accent);
-    padding:15px 20px;
-    border-radius:12px;
-    opacity:0;
-    transform:translateY(20px);
-    transition:0.3s;
-}
-.toast.show {
-    opacity:1;
-    transform:translateY(0);
-}
-
-/* FOOTER */
-.footer {
-    text-align:center;
-    margin-top:60px;
-    font-size:0.7rem;
-    opacity:0.3;
-}
-</style>
-</head>
-
-<body>
-
-<div class="loader"><span>ASFIXY</span></div>
-<canvas id="bg"></canvas>
-
-<div class="container">
-
-<div class="header">
-<div class="logo">HeHeHe</div>
-<div class="status">● ONLINE</div>
-</div>
-
-<div class="hero">
-<h1>Asfixy <span>Abyss</span></h1>
-<p>Secure • Fast • Locked</p>
-</div>
-
-<div class="key-container" id="keyDisplay">
-    <!-- Populated by JS -->
-</div>
-
-<div class="grid">
-
-
-
-<div class="card" data-href="/get-key">
-<h2>GET KEY</h2>
-<p>Generate instant acess key.</p>
-</div>
-
-<div class="card" data-href="/redeem">
-<h2>REDEEM</h2>
-<p>Activate IP-LOCK for Premium Keys.</p>
-</div>
-
-<div class="card" data-href="/status">
-<h2>FARM STATUS</h2>
-<p>View your live farms.</p>
-</div>
-
-<div class="card" data-href="/engine">
-<h2>ENGINE</h2>
-<p>Execute scripts remotely.</p>
-</div>
-
-<div class="card" data-href="https://discord.gg/uSvZ5BJuJ4">
-<h2>DISCORD</h2>
-<p>Join ur updates server.</p>
-</div>
-
-</div>
-
-<div class="footer">
-Asfixy Engine © 2026 • Premium System
-</div>
-
-</div>
-
-<div class="toast" id="toast">Copied!</div>
-
-<script nonce="${getReqNonce(request)}">
-setTimeout(()=>document.querySelector('.loader').style.display='none',800);
-
-/* NAV — wire cards via addEventListener (CSP blocks onclick attributes) */
-document.querySelectorAll('.card[data-href]').forEach(card => {
-    card.style.cursor = 'pointer';
-    card.addEventListener('click', () => {
-        const href = card.getAttribute('data-href');
-        if (href.startsWith('http')) window.open(href, '_blank');
-        else window.location.href = href;
+    const templateLoader = require('./src/lib/templateLoader');
+    const html = templateLoader.render('home', {
+        NONCE: getReqNonce(request)
     });
-});
-
-/* TOAST */
-function toast(msg){
-    const t = document.getElementById('toast');
-    t.innerText = msg;
-    t.classList.add('show');
-    setTimeout(()=>t.classList.remove('show'),2000);
-}
-
-/* COPY */
-function copyApi(){
-    navigator.clipboard.writeText(location.origin + '/status');
-    toast("API copied");
-}
-
-/* KEY CHECK */
-const savedKey = localStorage.getItem('asfixy_key');
-const kd = document.getElementById('keyDisplay');
-if(savedKey) {
-    kd.innerHTML = '<div class="badge">ACTIVE SESSION</div>' +
-        '<h3>ASFIXY ACCESS</h3>' +
-        '<div class="key-val" style="cursor:pointer;" onclick="navigator.clipboard.writeText(\\\'' + savedKey + '\\\');toast(\\\'Key copied!\\\');">' + savedKey + '</div>' +
-        '<div id="keyTime" style="color:var(--accent);margin-bottom:20px;font-size:1.1rem;letter-spacing:2px;">Loading...</div>' +
-        '<button class="btn-get" onclick="navigator.clipboard.writeText(\\\'' + savedKey + '\\\');toast(\\\'Key copied!\\\');">COPY KEY</button>' +
-        '<div style="font-size:0.7rem;opacity:0.5;margin-top:15px;" id="keyIp">IP: Checking...</div>';
-
-    fetch('/key-info/' + savedKey).then(r=>r.json()).then(d => {
-        if(!d.valid) {
-            kd.innerHTML = '<div class="badge" style="background:#ff3333;color:#fff;">EXPIRED</div><h3>SESSION ENDED</h3><a href="/get-key" class="btn-get">GET NEW KEY</a>';
-            localStorage.removeItem('asfixy_key');
-        } else {
-            document.getElementById('keyIp').innerText = 'IP: ' + (d.ip || 'Unknown');
-            if(d.perm) {
-                document.getElementById('keyTime').innerText = 'LIFETIME';
-            } else {
-                setInterval(()=>{
-                    d.ms -= 1000;
-                    if(d.ms <= 0) location.reload();
-                    let s = Math.floor(d.ms / 1000);
-                    let h = Math.floor(s / 3600);
-                    let m = Math.floor((s % 3600) / 60);
-                    let sec = s % 60;
-                    document.getElementById('keyTime').innerText = 
-                        h.toString().padStart(2, '0') + ':' + 
-                        m.toString().padStart(2, '0') + ':' + 
-                        sec.toString().padStart(2, '0');
-                }, 1000);
-            }
-        }
-    }).catch(()=>{});
-} else {
-    kd.innerHTML = '<div class="badge" style="opacity:0.5;">NO SESSION</div>' +
-        '<h3>ASFIXY ACCESS</h3>' +
-        '<div class="key-val" style="color:#555;border-color:rgba(255,255,255,0.1);background:rgba(0,0,0,0.5);">---</div>' +
-        '<a href="/get-key" class="btn-get">GET NEW KEY</a>';
-}
-
-
-/* PARTICLES */
-const c = document.getElementById('bg');
-const ctx = c.getContext('2d');
-c.width = innerWidth;
-c.height = innerHeight;
-
-let p = [];
-for(let i=0;i<60;i++){
-    p.push({x:Math.random()*c.width,y:Math.random()*c.height,v:Math.random()*0.5});
-}
-
-function draw(){
-    ctx.clearRect(0,0,c.width,c.height);
-    ctx.fillStyle='rgba(255,51,51,0.2)';
-    p.forEach(e=>{
-        e.y+=e.v;
-        if(e.y>c.height) e.y=0;
-        ctx.fillRect(e.x,e.y,2,2);
-    });
-    requestAnimationFrame(draw);
-}
-draw();
-
-</script>
-
-</body>
-</html>
-`;
     reply.type('text/html').send(html);
 });
 
@@ -1556,362 +716,10 @@ fastify.post('/log', async (req, reply) => {
 });
 
 fastify.get('/engine', async (req, reply) => {
-
-    const html = `
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Asfixy Engine</title>
-
-<style>
-:root{
---bg:#050505;
---card:rgba(20,20,20,0.7);
---accent:#ff3333;
---text:#eaeaea;
-}
-
-*{margin:0;padding:0;box-sizing:border-box;font-family:'Inter',sans-serif;}
-
-body{
-background:radial-gradient(circle at top,#0a0a0a,#050505);
-color:var(--text);
-height:100vh;
-display:flex;
-flex-direction:column;
-overflow:hidden;
-}
-
-/* HEADER */
-.header{
-padding:20px 30px;
-background:rgba(0,0,0,0.5);
-backdrop-filter:blur(10px);
-border-bottom:1px solid rgba(255,255,255,0.05);
-display:flex;
-justify-content:space-between;
-align-items:center;
-}
-
-.title{
-color:var(--accent);
-letter-spacing:4px;
-font-weight:bold;
-font-size:1.2rem;
-}
-
-.status{
-font-size:0.75rem;
-color:#33ff77;
-background:rgba(51,255,119,0.1);
-padding:6px 12px;
-border-radius:20px;
-}
-
-/* MAIN LAYOUT */
-.main-area{
-flex:1;
-display:flex;
-padding:20px;
-gap:20px;
-max-width:1400px;
-margin:0 auto;
-width:100%;
-min-height:0;
-overflow:hidden;
-}
-
-/* EDITOR PANEL */
-.editor-panel{
-flex:2;
-display:flex;
-flex-direction:column;
-background:var(--card);
-border-radius:20px;
-border:1px solid rgba(255,255,255,0.05);
-overflow:hidden;
-min-height:0;
-}
-
-.panel-header{
-padding:15px 20px;
-background:rgba(0,0,0,0.3);
-border-bottom:1px solid rgba(255,255,255,0.05);
-font-size:0.8rem;
-color:var(--accent);
-letter-spacing:2px;
-font-weight:bold;
-display:flex;
-justify-content:space-between;
-align-items:center;
-}
-
-textarea{
-flex:1;
-background:transparent;
-border:none;
-color:#fff;
-padding:20px;
-resize:none;
-font-size:14px;
-font-family:monospace;
-outline:none;
-line-height:1.5;
-}
-
-.actions{
-display:flex;
-gap:10px;
-padding:15px;
-background:rgba(0,0,0,0.3);
-border-top:1px solid rgba(255,255,255,0.05);
-}
-
-button{
-flex:1;
-padding:14px;
-border:none;
-border-radius:10px;
-background:rgba(255,255,255,0.05);
-color:#fff;
-cursor:pointer;
-font-weight:bold;
-transition:.3s;
-font-size:0.85rem;
-}
-
-button:hover{
-background:rgba(255,255,255,0.1);
-}
-
-button.primary{
-background:var(--accent);
-}
-button.primary:hover{
-background:#e62e2e;
-transform:translateY(-2px);
-box-shadow:0 5px 15px rgba(255,51,51,0.3);
-}
-
-/* CONSOLE PANEL */
-.console-panel{
-flex:1;
-display:flex;
-flex-direction:column;
-background:var(--card);
-border-radius:20px;
-border:1px solid rgba(255,255,255,0.05);
-overflow:hidden;
-min-height:0;
-}
-
-.console{
-flex:1;
-padding:20px;
-overflow-y:auto;
-font-size:13px;
-font-family:monospace;
-color:#eaeaea;
-display:flex;
-flex-direction:column;
-gap:8px;
-}
-
-.log-entry{
-padding:8px 12px;
-background:rgba(0,0,0,0.3);
-border-radius:8px;
-border-left:3px solid #555;
-word-break:break-all;
-}
-
-.log-entry.error{
-border-left-color:var(--accent);
-color:#ff8888;
-background:rgba(255,51,51,0.05);
-}
-
-.log-entry.success{
-border-left-color:#33ff77;
-color:#aaffaa;
-background:rgba(51,255,119,0.05);
-}
-
-.log-entry.info{
-border-left-color:#33aaff;
-}
-
-/* TOAST */
-.toast{
-position:fixed;
-bottom:25px;
-right:25px;
-background:#111;
-border:1px solid var(--accent);
-padding:15px 25px;
-border-radius:12px;
-opacity:0;
-transform:translateY(20px);
-transition:.3s;
-font-weight:bold;
-color: #fff;
-z-index:999;
-}
-.toast.show{
-opacity:1;
-transform:translateY(0);
-}
-.toast.error{ border-color: var(--accent); }
-.toast.success{ border-color: #33ff77; }
-</style>
-</head>
-
-<body>
-
-<div class="header">
-<div class="title">ASFIXY ENGINE</div>
-<div class="status">● CONNECTED</div>
-</div>
-
-<div class="main-area">
-    <div class="editor-panel">
-        <div class="panel-header">
-            <span>EXECUTOR</span>
-            <span style="opacity:0.5;font-size:0.7rem;letter-spacing:0;">JS / Asfixy API</span>
-        </div>
-        <textarea id="code" spellcheck="false">// Write your script here...
-Game.Earn(1000000);
-Game.Notify('Asfixy Engine', 'Script executed successfully!', [16,5]);
-</textarea>
-        
-        <div class="actions">
-            <button id="btnExecute" class="primary">EXECUTE SCRIPT</button>
-            <button id="btnClear">CLEAR</button>
-            <button id="btnOpenGame">OPEN GAME</button>
-        </div>
-    </div>
-    
-    <div class="console-panel">
-        <div class="panel-header">OUTPUT CONSOLE</div>
-        <div class="console" id="log">
-            <div class="log-entry info">System initialized. Waiting for execution...</div>
-        </div>
-    </div>
-</div>
-
-<div class="toast" id="toast">Message</div>
-
-<script nonce="${getReqNonce(req)}">
-function showToast(msg, type = "error"){
-    const t=document.getElementById('toast');
-    t.innerText=msg;
-    t.className = 'toast show ' + type;
-    setTimeout(()=>t.classList.remove('show'), 3000);
-}
-
-document.getElementById('btnExecute').addEventListener('click', execute);
-document.getElementById('btnClear').addEventListener('click', clearCode);
-document.getElementById('btnOpenGame').addEventListener('click', openGame);
-
-function log(msg, type="info"){
-    const el = document.getElementById('log');
-    const entry = document.createElement('div');
-    entry.className = 'log-entry ' + type;
-    
-    const time = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', second:'2-digit'});
-    entry.innerText = "[" + time + "] " + msg;
-    
-    el.appendChild(entry);
-    el.scrollTop = el.scrollHeight;
-}
-
-function openGame(){
-    const key = localStorage.getItem("asfixy_key");
-    if (!key) {
-        showToast("No key found! Get a key first.", "error");
-        return;
-    }
-    const url = "https://orteil.dashnet.org/cookieclicker/?asfixy_key=" + encodeURIComponent(key);
-    window.open(url, "_blank");
-}
-
-async function execute(){
-    const code = document.getElementById('code').value.trim();
-    const key = localStorage.getItem("asfixy_key");
-
-    if(!key){
-        log("Cannot execute: No Access Key found in LocalStorage. Please visit /get-key.", "error");
-        showToast("Missing Key", "error");
-        return;
-    }
-    
-    if(!code){
-        log("Cannot execute: Script is empty.", "warn");
-        return;
-    }
-
-    log("Sending script payload to engine...", "info");
-
-    try {
-        const res = await fetch('/engine/execute', {
-            method:'POST',
-            headers:{
-                'Content-Type':'application/json',
-                'x-asfixy-key': key
-            },
-            body:JSON.stringify({code})
-        });
-
-        const data = await res.json().catch(() => ({}));
-
-        if(res.ok){
-            showToast("Payload delivered!", "success");
-            log("Execution queued successfully. Waiting for game client to pull.", "success");
-        } else {
-            const err = data.error || "Unknown server error";
-            showToast("Execution failed", "error");
-            log("Execution rejected: " + err, "error");
-        }
-    } catch(err) {
-        showToast("Network error", "error");
-        log("Network error: Failed to reach Asfixy API.", "error");
-    }
-}
-
-function clearCode(){
-    document.getElementById('code').value = "";
-    log("Editor cleared.", "info");
-}
-
-let wasConnected = false;
-setInterval(async () => {
-    const key = localStorage.getItem("asfixy_key");
-    if (!key) return;
-    try {
-        const res = await fetch('/engine/status', {
-            headers: { 'x-asfixy-key': key }
-        });
-        const data = await res.json();
-        if (data.connected && !wasConnected) {
-            showToast("Injection Successful", "success");
-            log("Game connected to Asfixy Engine.", "success");
-            wasConnected = true;
-        } else if (!data.connected && wasConnected) {
-            wasConnected = false;
-            log("Game connection lost.", "error");
-        }
-    } catch(e) {}
-}, 2000);
-
-</script>
-
-</body>
-</html>
-`;
-
-
+    const templateLoader = require('./src/lib/templateLoader');
+    const html = templateLoader.render('engine', {
+        NONCE: getReqNonce(req)
+    });
     reply.type('text/html').send(html);
 });
 

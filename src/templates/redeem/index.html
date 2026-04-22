@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Asfixy - Redeem Key</title>
+    <link rel="stylesheet" href="/static/styles/redeem.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Activation</h1>
+        <p style="font-size: 0.8rem; opacity: 0.5;">Enter your key to lock it to this device.</p>
+        <input type="text" id="keyInput" placeholder="asfixy-XXXXXX">
+        <button id="redeemBtn">ACTIVATE DEVICE</button>
+        <div id="status"></div>
+    </div>
+    <script nonce="{{NONCE}}" src="/static/js/redeem.js"></script>
+</body>
+</html>

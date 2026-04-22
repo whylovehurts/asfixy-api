@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Asfixy</title>
+    <link rel="stylesheet" href="/static/styles/home.css">
+</head>
+<body>
+    <div class="loader"><span>ASFIXY</span></div>
+    <canvas id="bg"></canvas>
+
+    <div class="container">
+        <div class="header">
+            <div class="logo">HeHeHe</div>
+        </div>
+
+        <div class="hero">
+            <h1>Asfixy <span>Abyss</span></h1>
+            <p>Secure • Fast • Locked</p>
+        </div>
+
+        <div class="key-container" id="keyDisplay"></div>
+
+        <div class="grid">
+            <div class="card" data-href="/get-key">
+                <h2>GET KEY</h2>
+                <p>Generate instant acess key.</p>
+            </div>
+            <div class="card" data-href="/redeem">
+                <h2>REDEEM</h2>
+                <p>Activate IP-LOCK for Premium Keys.</p>
+            </div>
+            <div class="card" data-href="/status">
+                <h2>FARM STATUS</h2>
+                <p>View your live farms.</p>
+            </div>
+            <div class="card" data-href="/engine">
+                <h2>ENGINE</h2>
+                <p>Execute scripts remotely.</p>
+            </div>
+            <div class="card" data-href="https://discord.gg/uSvZ5BJuJ4">
+                <h2>DISCORD</h2>
+                <p>Join ur updates server.</p>
+            </div>
+        </div>
+
+        <div class="footer">
+            Asfixy Engine © 2026 • Premium System
+        </div>
+    </div>
+
+    <div class="toast" id="toast">Copied!</div>
+
+    <script nonce="{{NONCE}}" src="/static/js/home.js"></script>
+</body>
+</html>

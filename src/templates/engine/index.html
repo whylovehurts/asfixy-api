@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Asfixy Engine</title>
+    <link rel="stylesheet" href="/static/styles/engine.css">
+</head>
+<body>
+    <div class="header">
+        <div class="title">ASFIXY ENGINE</div>
+        <div class="status" id="injectStatus">Not Injected</div>
+    </div>
+
+    <div class="main-area">
+        <div class="editor-panel">
+            <div class="panel-header">
+                <span>EXECUTOR</span>
+                <span style="opacity:0.5;font-size:0.7rem;">JS / Asfixy API</span>
+            </div>
+            <textarea id="code" spellcheck="false">// Write your script here...
+Game.Earn(1000000);
+Game.Notify('Asfixy Engine', 'Script executed successfully!', [16,5]);
+</textarea>
+            <div class="actions">
+                <button id="btnExecute" class="primary">EXECUTE SCRIPT</button>
+                <button id="btnClear">CLEAR</button>
+                <button id="btnOpenGame">OPEN GAME</button>
+            </div>
+        </div>
+        <div class="console-panel">
+            <div class="panel-header">OUTPUT CONSOLE</div>
+            <div class="console" id="log">
+                <div class="log-entry info">System initialized. Waiting for execution...</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="toast" id="toast">Message</div>
+
+    <script nonce="{{NONCE}}" src="/static/js/engine.js"></script>
+</body>
+</html>

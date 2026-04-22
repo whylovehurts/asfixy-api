@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{TITLE}}</title>
+    {{CSS}}
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="logo">ASFIXY ADMIN</div>
+            <div style="display:flex; gap:10px;">
+                <button class="tab-btn {{KEYS_ACTIVE}}" data-tab="keys">KEYS</button>
+                <button class="tab-btn {{BANS_ACTIVE}}" data-tab="bans">BANS</button>
+                <button class="tab-btn {{LOGS_ACTIVE}}" data-tab="logs">LOGS</button>
+                <button class="btn btn-outline" id="btnBulk">BULK CREATE</button>
+                <button class="btn btn-outline" style="border-color:var(--accent); color:var(--accent);" id="btnBulkDelete">BULK DELETE</button>
+                <button class="btn" id="btnCreate">+ NEW KEY</button>
+            </div>
+        </div>
+
+        {{TAB_CONTENT}}
+
+        {{MODAL}}
+    </div>
+
+    {{JS}}
+</body>
+</html>

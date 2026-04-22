@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Asfixy Key</title>
+    <link rel="stylesheet" href="/static/styles/get-key.css">
+</head>
+<body>
+    <canvas id="bg"></canvas>
+
+    <div class="container">
+        {{BADGE}}
+        <div class="title">ASFIXY ACCESS</div>
+        <div class="key" id="key">{{KEY}}</div>
+        {{TIMER}}
+        <button id="copyBtn">COPY KEY</button>
+        <div class="info">
+            IP: {{USER_IP}}<br>
+            {{EXPIRY_TEXT}}
+        </div>
+    </div>
+
+    <div class="toast" id="toast">Copied</div>
+
+    <script nonce="{{NONCE}}" src="/static/js/get-key.js"></script>
+</body>
+</html>

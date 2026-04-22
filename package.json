@@ -7,7 +7,9 @@
   },
   "main": "main.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node tests/runner.js",
+    "test:visual": "node tests/modules/visual_test.js"
   },
   "keywords": [],
   "author": "",
@@ -24,5 +26,8 @@
     "mongoose": "^9.4.1",
     "sanitize-html": "^2.17.3",
     "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "puppeteer": "^24.42.0"
   }
 }

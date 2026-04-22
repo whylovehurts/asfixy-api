@@ -1,23 +1,78 @@
 /**
  * Admin Routes
  * Key management, bulk operations, ban system
+ * 2-Step Auth: key (first) -> pass (second)
  */
 
 const { KeyModel, BanModel, LogModel } = require('../models');
 const { MASTER_KEY, ADMIN_SECRET, IS_PROD } = require('../config/env');
 const { DURACAO_KEY } = require('../lib/constants');
+const fs = require('fs');
+const path = require('path');
+
+// Load admin CSS at startup
+const ADMIN_STYLES = fs.readFileSync(path.join(__dirname, '..', 'templates', 'admin', 'styles.css'), 'utf8');
+const ADMIN_CLIENT_JS = fs.readFileSync(path.join(__dirname, '..', 'templates', 'admin', 'client.js'), 'utf8');
 
 /**
- * Verify reinforced admin auth
- * Requires both MASTER_KEY and ADMIN_SECRET
+ * Check if key is valid
+ */
+function isValidKey(request) {
+    return request.query?.key === MASTER_KEY;
+}
+
+/**
+ * Verify reinforced admin auth (full: key + pass)
  */
 function verifyAdminAuth(request) {
     const key = request.query?.key;
-    const secret = request.headers['x-admin-secret'] || request.query?.admin_secret;
-    
+    const pass = request.headers['x-admin-pass'] || request.query?.pass;
+
     if (key !== MASTER_KEY) return false;
-    if (secret !== ADMIN_SECRET) return false;
+    if (pass !== ADMIN_SECRET) return false;
     return true;
+}
+
+/**
+ * Password Entry UI (Glassmorphism)
+ * Shown when key is correct but pass is missing/wrong
+ */
+function renderPasswordUI(key, error = '', nonce = '') {
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Asfixy Admin - Security</title>
+    <style>
+        :root { --bg: #0a0a0a; --card: rgba(20, 20, 20, 0.7); --accent: #ff3333; --text: #eaeaea; --text-dim: #888; }
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Inter', sans-serif; }
+        body { background: radial-gradient(ellipse at top, #1a1a1a, #050505); color: var(--text); min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
+        .card { background: var(--card); backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.08); border-radius: 16px; padding: 40px; width: 100%; max-width: 380px; box-shadow: 0 8px 32px rgba(0,0,0,0.4); }
+        h1 { text-align: center; font-size: 1.5rem; font-weight: 500; margin-bottom: 8px; color: var(--text); }
+        .subtitle { text-align: center; font-size: 0.85rem; color: var(--text-dim); margin-bottom: 32px; }
+        .error { background: rgba(255, 51, 51, 0.15); border: 1px solid rgba(255, 51, 51, 0.3); color: #ff5555; padding: 12px 16px; border-radius: 8px; font-size: 0.85rem; margin-bottom: 20px; text-align: center; }
+        input { width: 100%; padding: 14px 16px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; color: var(--text); font-size: 1rem; margin-bottom: 20px; outline: none; transition: border-color 0.2s, box-shadow 0.2s; }
+        input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(255, 51, 51, 0.15); }
+        input::placeholder { color: #555; }
+        button { width: 100%; padding: 14px; background: linear-gradient(135deg, #ff3333, #cc2222); border: none; border-radius: 8px; color: white; font-size: 1rem; font-weight: 600; cursor: pointer; transition: transform 0.15s, box-shadow 0.15s; }
+        button:hover { transform: translateY(-1px); box-shadow: 0 4px 20px rgba(255, 51, 51, 0.4); }
+        button:active { transform: translateY(0); }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>ADMIN ACCESS</h1>
+        <p class="subtitle">Enter your password to continue</p>
+        ${error ? `<div class="error">${error}</div>` : ''}
+        <form id="passForm" method="GET" action="/admin">
+            <input type="hidden" name="key" value="${key}">
+            <input type="password" name="pass" placeholder="Password" required autofocus>
+            <button type="submit">Unlock Panel</button>
+        </form>
+    </div>
+</body>
+</html>`;
 }
 
 /**
@@ -46,11 +101,23 @@ function escapeHtml(str = "") {
 
 /**
  * GET /admin
- * Admin panel UI with pagination
- * Requires both MASTER_KEY and ADMIN_SECRET
+ * Admin panel UI with 2-step authentication
+ * Step 1: key must be correct
+ * Step 2: pass required to view panel
  */
 async function adminPageRoute(request, reply) {
-    if (!verifyAdminAuth(request)) return reply.code(403).send("DENIED");
+    const key = request.query?.key;
+    const pass = request.headers['x-admin-pass'] || request.query?.pass;
+
+    if (!key) return reply.code(403).send("DENIED");
+    if (!isValidKey(request)) return reply.code(403).send("DENIED");
+
+    if (!pass || pass !== ADMIN_SECRET) {
+        const error = pass ? 'Incorrect password' : '';
+        return reply
+            .header('Content-Type', 'text/html; charset=utf-8')
+            .send(renderPasswordUI(escapeHtml(key), error));
+    }
 
     const tab = request.query.tab || 'keys';
     const rawPage = parseInt(request.query.page) || 1;
@@ -78,6 +145,7 @@ async function adminPageRoute(request, reply) {
 
     // Pass ADMIN_SECRET to template (but only for use in JavaScript)
     const adminSecretForJs = ADMIN_SECRET;
+    const passParam = 'pass=' + encodeURIComponent(ADMIN_SECRET);
 
     const html = `
     <!DOCTYPE html>
@@ -86,69 +154,7 @@ async function adminPageRoute(request, reply) {
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Asfixy Admin</title>
-        <style>
-            :root {
-                --bg: #050505;
-                --card: rgba(20, 20, 20, 0.6);
-                --accent: #ff3333;
-                --accent-soft: rgba(255, 51, 51, 0.15);
-                --text: #eaeaea;
-                --success: #33ff77;
-            }
-            * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Inter', sans-serif; }
-            body { background: radial-gradient(circle at top, #0a0a0a, #050505); color: var(--text); min-height: 100vh; padding: 40px 20px; overflow-y: auto; }
-            .container { max-width: 1100px; margin: 0 auto; }
-            
-            .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 40px; }
-            .logo { font-size: 1.5rem; font-weight: bold; letter-spacing: 4px; color: var(--accent); }
-            .btn { background: var(--accent); color: #fff; padding: 12px 24px; border-radius: 12px; border: none; font-weight: bold; cursor: pointer; transition: 0.3s; font-size: 0.9rem; }
-            .btn:hover { transform: scale(1.05); box-shadow: 0 0 20px rgba(255,51,51,0.4); }
-            .btn-outline { background: transparent; border: 1px solid var(--accent); color: var(--accent); }
-            .btn-outline:hover { background: var(--accent-soft); }
-
-            .panel { background: var(--card); backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.05); border-radius: 24px; padding: 30px; box-shadow: 0 20px 50px rgba(0,0,0,0.8); overflow-x: auto; }
-            
-            table { width: 100%; border-collapse: collapse; min-width: 700px; }
-            th { text-align: left; padding: 15px; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 2px; color: #888; border-bottom: 1px solid rgba(255,255,255,0.05); }
-            td { padding: 18px 15px; border-bottom: 1px solid rgba(255,255,255,0.02); vertical-align: middle; }
-            tr:hover { background: rgba(255,255,255,0.02); }
-            
-            .key-title { font-size: 1.1rem; font-weight: bold; color: var(--accent); margin-bottom: 4px; display: inline-block; }
-            .key-ip { font-size: 0.8rem; opacity: 0.5; font-family: monospace; }
-            .badge { display: inline-block; padding: 6px 12px; border-radius: 20px; font-size: 0.7rem; font-weight: bold; letter-spacing: 1px; }
-            .badge.perm { background: rgba(255,51,51,0.1); color: var(--accent); border: 1px solid var(--accent-soft); }
-            .badge.temp { background: rgba(51,255,119,0.1); color: var(--success); border: 1px solid rgba(51,255,119,0.2); }
-            
-            .actions { display: flex; gap: 10px; }
-            .btn-sm { padding: 8px 14px; font-size: 0.75rem; border-radius: 8px; border: none; cursor: pointer; transition: 0.2s; font-weight: bold; }
-            .btn-sm.edit { background: rgba(255,255,255,0.05); color: #fff; }
-            .btn-sm.edit:hover { background: rgba(255,255,255,0.1); }
-            .btn-sm.reset { background: rgba(51,255,119,0.1); color: var(--success); }
-            .btn-sm.reset:hover { background: rgba(51,255,119,0.2); }
-            .btn-sm.revoke { background: rgba(255,51,51,0.1); color: var(--accent); }
-            .btn-sm.revoke:hover { background: rgba(255,51,51,0.2); }
-
-            .pagination { display: flex; justify-content: space-between; align-items: center; margin-top: 30px; }
-            .page-info { font-size: 0.9rem; opacity: 0.6; }
-
-            /* MODAL */
-            .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(5px); display: flex; justify-content: center; align-items: center; opacity: 0; pointer-events: none; transition: 0.3s; z-index: 100; }
-            .modal-overlay.active { opacity: 1; pointer-events: all; }
-            .modal { background: #111; border: 1px solid rgba(255,51,51,0.2); border-radius: 20px; padding: 30px; width: 90%; max-width: 400px; transform: translateY(20px); transition: 0.3s; }
-            .modal-overlay.active .modal { transform: translateY(0); }
-            .modal h2 { color: var(--accent); margin-bottom: 20px; font-size: 1.3rem; letter-spacing: 2px; text-transform: uppercase; }
-            .input-group { margin-bottom: 20px; }
-            .input-group label { display: block; font-size: 0.8rem; margin-bottom: 8px; opacity: 0.7; }
-            .input-group input { width: 100%; padding: 12px; background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.1); color: #fff; border-radius: 10px; font-family: 'Inter', sans-serif; outline: none; }
-            .input-group input:focus { border-color: var(--accent); }
-            .input-group input[type="checkbox"] { width: auto; transform: scale(1.3); margin-left: 5px; }
-            .modal-actions { display: flex; justify-content: flex-end; gap: 10px; }
-            
-            /* TABS */
-            .tab-btn { background: rgba(255,255,255,0.05); color: #888; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-weight: bold; transition: 0.3s; }
-            .tab-btn:hover { background: rgba(255,255,255,0.1); color: #fff; }
-            .tab-btn.active { background: var(--accent); color: #fff; }
-        </style>
+        <style>${ADMIN_STYLES}</style>
     </head>
     <body>
         <div class="container">
@@ -284,6 +290,7 @@ async function adminPageRoute(request, reply) {
         <script nonce="${request.nonce}">
             const ADMIN_SECRET = "${adminSecretForJs}";
             const MASTER_KEY = "${request.query.key}";
+            const passParam = 'pass=' + encodeURIComponent(ADMIN_SECRET);
             const modalOverlay = document.getElementById('modalOverlay');
             const modalTitle = document.getElementById('modalTitle');
             const modalBody = document.getElementById('modalBody');
@@ -307,7 +314,7 @@ async function adminPageRoute(request, reply) {
             document.querySelectorAll('.tab-btn').forEach(btn => {
                 btn.addEventListener('click', () => {
                     const tab = btn.getAttribute('data-tab');
-                    window.location.href = '/admin?key='+MASTER_KEY+'&admin_secret='+ADMIN_SECRET+'&tab='+tab;
+                    window.location.href = '/admin?key='+MASTER_KEY+'&'+passParam+'&tab='+tab;
                 });
             });
 
@@ -315,7 +322,7 @@ async function adminPageRoute(request, reply) {
                 const params = new URLSearchParams(window.location.search);
                 return {
                     key: params.get('key'),
-                    admin_secret: params.get('admin_secret'),
+                    pass: params.get('pass'),
                     tab: params.get('tab') || 'keys',
                     page: params.get('page') || 1
                 };
@@ -323,7 +330,7 @@ async function adminPageRoute(request, reply) {
 
             function changePage(p) { 
                 const params = getUrlParams();
-                window.location.href = '/admin?key='+params.key+'&admin_secret='+params.admin_secret+'&tab='+params.tab+'&page='+p; 
+                window.location.href = '/admin?key='+params.key+'&pass='+params.pass+'&tab='+params.tab+'&page='+p; 
             }
 
             function closeModal() {
@@ -423,11 +430,11 @@ async function adminPageRoute(request, reply) {
                 modalConfirmBtn.disabled = true;
 
                 try {
-                    await fetch(endpoint + '?key=' + MASTER_KEY + '&admin_secret=' + ADMIN_SECRET, {
+                    await fetch(endpoint + '?key=' + MASTER_KEY + '&' + passParam, {
                         method: 'POST',
                         headers: { 
                             'Content-Type': 'application/json',
-                            'x-admin-secret': ADMIN_SECRET
+                            'x-admin-pass': ADMIN_SECRET
                         },
                         body: JSON.stringify(payload)
                     });
@@ -444,11 +451,11 @@ async function adminPageRoute(request, reply) {
                 if (!confirm("Are you sure you want to perform this action on " + targetKey + "?")) return;
                 try {
                     const payload = { targetKey, ...extraData };
-                    await fetch('/admin/' + type + '?key=' + MASTER_KEY + '&admin_secret=' + ADMIN_SECRET, {
+                    await fetch('/admin/' + type + '?key=' + MASTER_KEY + '&' + passParam, {
                         method: 'POST',
                         headers: { 
                             'Content-Type': 'application/json',
-                            'x-admin-secret': ADMIN_SECRET
+                            'x-admin-pass': ADMIN_SECRET
                         },
                         body: JSON.stringify(payload)
                     });
@@ -459,11 +466,11 @@ async function adminPageRoute(request, reply) {
             async function unbanAction(ip, key) {
                 if (!confirm("Are you sure you want to unban this entry?")) return;
                 try {
-                    await fetch('/admin/unban?key=' + MASTER_KEY + '&admin_secret=' + ADMIN_SECRET, {
+                    await fetch('/admin/unban?key=' + MASTER_KEY + '&' + passParam, {
                         method: 'POST',
                         headers: { 
                             'Content-Type': 'application/json',
-                            'x-admin-secret': ADMIN_SECRET
+                            'x-admin-pass': ADMIN_SECRET
                         },
                         body: JSON.stringify({ ip: ip, key: key })
                     });

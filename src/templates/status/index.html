@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Saves Storage</title>
+    <link rel="stylesheet" href="/static/styles/status.css">
+</head>
+<body>
+    <div class="header">
+        <div class="title">ASFIXY STATUS</div>
+        <div class="badge">● LIVE ({{COUNT}})</div>
+    </div>
+
+    <input class="search" id="searchInput" placeholder="Search bakery...">
+
+    <div class="grid" id="grid">
+        {{CARDS}}
+    </div>
+
+    <div class="footer">
+        Realtime Farm Monitor • Asfixy Engine
+    </div>
+
+    <div class="toast" id="toast">Save copied!</div>
+
+    <script nonce="{{NONCE}}" src="/static/js/status.js"></script>
+</body>
+</html>
