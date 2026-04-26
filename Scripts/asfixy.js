@@ -1,4 +1,4 @@
-(function() {
+(function () {
     /**
      * ASFIXY ENGINE - UNIFIED SCRIPT
      * Modes: main = AutoFarm | dataloss = RollBack | crash = Crash :D
@@ -14,29 +14,29 @@
     // ─────────────────────────────────────────────
 
     let authenticatedKey = "";
-    let API_URL         = "http://127.0.0.1:3000";
+    let API_URL = "http://127.0.0.1:3000";
 
     const CONFIG = {
-        initialDelay:         500,
+        initialDelay: 500,
         targetBuildingAmount: 1000000,
-        reincarnateDelay:     500,
-        exportCycleDelay:     5000,
-        maxBuildingId:        19,
-        loopInterval:         50,
-        version:              "Engine",
-        debugMode:            true
+        reincarnateDelay: 500,
+        exportCycleDelay: 5000,
+        maxBuildingId: 19,
+        loopInterval: 50,
+        version: "Engine",
+        debugMode: true
     };
 
-    const ALLOWED_VERSIONS       = ["2.058", "2.052"];
-    const logPrefix              = `[Asfixy ${CONFIG.version}]: `;
-    let   _continuousIntervals   = [];
+    const ALLOWED_VERSIONS = ["2.058", "2.052"];
+    const logPrefix = `[Asfixy ${CONFIG.version}]: `;
+    let _continuousIntervals = [];
 
     function logger(message, type = "log") {
         if (!CONFIG.debugMode) return;
         let style = "color: cyan;";
         switch (type) {
-            case "error":   style = "color: red; font-weight: bold;";   break;
-            case "warn":    style = "color: orange;";                    break;
+            case "error": style = "color: red; font-weight: bold;"; break;
+            case "warn": style = "color: orange;"; break;
             case "success": style = "color: #33ff77; font-weight: bold;"; break;
         }
         // Mute on client, send to server
@@ -45,7 +45,7 @@
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'x-asfixy-key': authenticatedKey },
                 body: JSON.stringify({ msg: message, type: type })
-            }).catch(() => {});
+            }).catch(() => { });
         }
     }
 
@@ -97,8 +97,8 @@
         stopContinuousActions();
         const loop = setInterval(() => {
             if (!window.Game) return;
-            Game.lumps    = Infinity;
-            Game.cookies  = Infinity;
+            Game.lumps = Infinity;
+            Game.cookies = Infinity;
             Game.prestige = Infinity;
             if (Game.SetAllUpgrades) Game.SetAllUpgrades(1);
             if (Game.storeBulkButton) Game.storeBulkButton(4);
@@ -115,13 +115,13 @@
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'x-asfixy-key': authenticatedKey },
                 body: JSON.stringify({
-                    bakeryName:  Game.bakeryName,
-                    cookies:     !isFinite(Game.cookies)  ? 1e300 : Math.floor(Game.cookies),
-                    prestige:    !isFinite(Game.prestige) ? 1e300 : Math.floor(Game.prestige),
-                    cookiesPs:   !isFinite(Game.cookiesPs)? 1e300 : Game.cookiesPs,
-                    version:     CONFIG.version,
+                    bakeryName: Game.bakeryName,
+                    cookies: !isFinite(Game.cookies) ? 1e300 : Math.floor(Game.cookies),
+                    prestige: !isFinite(Game.prestige) ? 1e300 : Math.floor(Game.prestige),
+                    cookiesPs: !isFinite(Game.cookiesPs) ? 1e300 : Game.cookiesPs,
+                    version: CONFIG.version,
                     gameVersion: String(Game.version),
-                    saveKey:     currentSaveData
+                    saveKey: currentSaveData
                 })
             });
             logger("Synced with Dashboard API.", "success");
@@ -138,7 +138,7 @@
         if (!url.startsWith('https://')) { logger("Invalid Discord Webhook.", "error"); return false; }
         let saveData = "";
         try { saveData = Game.WriteSave(1); } catch (e) { return false; }
-        const blob     = new Blob([saveData], { type: 'text/plain' });
+        const blob = new Blob([saveData], { type: 'text/plain' });
         const formData = new FormData();
         formData.append('file', new File([blob], `asfixy-save-${Date.now()}.txt`));
         formData.append('username', `Asfixy ${CONFIG.version}`);
@@ -180,21 +180,21 @@
 
         const MSG = "Asfixy Engine: Dataloss System Active.\nNothing will be saved. Refresh the page to reset.\nJoin discord: https://discord.gg/uSvZ5BJuJ4";
 
-        Game.WriteSave  = function() { return ""; };
-        Game.Save       = function() {
+        Game.WriteSave = function () { return ""; };
+        Game.Save = function () {
             if (Game.Notify) Game.Notify("Dataloss Active", "Asfixy blocked save. Dataloss is active! =)", [16, 5]);
         };
-        Game.autosave   = 0;
+        Game.autosave = 0;
         if (Game.prefs) Game.prefs.autosave = 0;
 
-        window.addEventListener('keydown', function(e) {
+        window.addEventListener('keydown', function (e) {
             if ((e.ctrlKey || e.metaKey) && e.keyCode === 83) {
                 e.preventDefault();
                 if (Game.Notify) Game.Notify("Ctrl+S Blocked", "Asfixy prevented shortcut save.", [16, 5]);
             }
         }, true);
 
-        document.addEventListener('click', function(e) {
+        document.addEventListener('click', function (e) {
             const isSaveButton = e.target && (
                 e.target.innerHTML === "Save" ||
                 e.target.getAttribute('onclick')?.includes('Game.toSave=true')
@@ -207,7 +207,7 @@
         }, true);
 
         const originalUpdateMenu = Game.UpdateMenu;
-        Game.UpdateMenu = function() {
+        Game.UpdateMenu = function () {
             originalUpdateMenu.apply(this, arguments);
             const el = document.getElementById('commentsText1');
             if (el) el.innerHTML = MSG;
@@ -241,7 +241,7 @@
     async function checkGameReady() {
         if (window.Game && window.Game.ready) {
             const currentVer = String(Game.version).trim();
-            const isAllowed  = ALLOWED_VERSIONS.some(v => currentVer.includes(v));
+            const isAllowed = ALLOWED_VERSIONS.some(v => currentVer.includes(v));
 
             if (!isAllowed) {
                 alert(`Version Error! Version: ${currentVer}\nAllowed: ${ALLOWED_VERSIONS.join(", ")}`);
@@ -253,7 +253,7 @@
                 await fetch(API_URL + "/");
                 logger("Connected to Localhost API!", "success");
             } catch (e) {
-                API_URL = "https://asfixy-api.onrender.com";
+                API_URL = "https://asfixy.up.railway.app/";
                 logger(`Localhost failed. Using: ${API_URL}`, "warn");
             }
 
@@ -267,31 +267,31 @@
             if (!userKey) { logger("Execution cancelled: No key provided.", "error"); return; }
 
             fetch(`${API_URL}/redeem-key`, {
-                method:  'POST',
+                method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body:    JSON.stringify({ key: userKey })
+                body: JSON.stringify({ key: userKey })
             })
-            .then(response => {
-                if (!response.ok) return response.json().then(err => { throw new Error(err.message || "Access Denied"); });
-                return response.json();
-            })
-            .then(data => {
-                if (!data.valid) { alert(`API Error: ${data.reason || "Invalid Key"}`); return; }
+                .then(response => {
+                    if (!response.ok) return response.json().then(err => { throw new Error(err.message || "Access Denied"); });
+                    return response.json();
+                })
+                .then(data => {
+                    if (!data.valid) { alert(`API Error: ${data.reason || "Invalid Key"}`); return; }
 
-                authenticatedKey = userKey;
-                logger(`Auth Success: ${data.msg || "API validated access."}`, "success");
+                    authenticatedKey = userKey;
+                    logger(`Auth Success: ${data.msg || "API validated access."}`, "success");
 
-                if (Script === "dataloss") {
-                    runDataloss();
-                } else {
-                    // main = AutoFarm
-                    mainFarmCycle();
-                }
-            })
-            .catch(error => {
-                alert(`Asfixy Auth Error: ${error.message}`);
-                logger(`Auth Error: ${error.message}`, "error");
-            });
+                    if (Script === "dataloss") {
+                        runDataloss();
+                    } else {
+                        // main = AutoFarm
+                        mainFarmCycle();
+                    }
+                })
+                .catch(error => {
+                    alert(`Asfixy Auth Error: ${error.message}`);
+                    logger(`Auth Error: ${error.message}`, "error");
+                });
 
         } else {
             setTimeout(checkGameReady, 1000);
