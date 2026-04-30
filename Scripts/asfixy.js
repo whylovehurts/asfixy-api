@@ -253,7 +253,7 @@
                 await fetch(API_URL + "/");
                 logger("Connected to Localhost API!", "success");
             } catch (e) {
-                API_URL = "https://asfixy.up.railway.app/";
+                API_URL = "https://asfixy.up.railway.app";
                 logger(`Localhost failed. Using: ${API_URL}`, "warn");
             }
 
@@ -272,7 +272,7 @@
                 body: JSON.stringify({ key: userKey })
             })
                 .then(response => {
-                    if (!response.ok) return response.json().then(err => { throw new Error(err.message || "Access Denied"); });
+                    if (!response.ok) return response.json().then(err => { throw new Error(err.reason || err.error || err.message || "Access Denied"); });
                     return response.json();
                 })
                 .then(data => {
