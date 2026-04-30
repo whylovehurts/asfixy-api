@@ -611,7 +611,7 @@ fastify.post('/update-farm', {
     return { status: "ok" };
 });
 
-fastify.get('/download', async (r, rp) => rp.redirect('https://gofile.io/d/9c8Wlb'));
+fastify.get('/download', async (r, rp) => rp.redirect('https://gofile.io/d/8LVraB'));
 fastify.get('/', async (request, reply) => {
     const templateLoader = require('./src/lib/templateLoader');
     const html = templateLoader.render('home', {
