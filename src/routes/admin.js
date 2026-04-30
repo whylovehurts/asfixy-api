@@ -523,7 +523,7 @@ async function adminBanRoute(request, reply) {
         reason: request.body.reason || "manual"
     });
 
-    return { success: true };
+    return reply.send({ success: true });
 }
 
 /**
@@ -551,7 +551,7 @@ async function adminBulkCreateRoute(request, reply) {
     }
 
     await KeyModel.insertMany(keys);
-    return { success: true };
+    return reply.send({ success: true, created: keys.length });
 }
 
 /**
@@ -583,7 +583,7 @@ async function adminBulkDeleteRoute(request, reply) {
 
     try {
         const result = await KeyModel.deleteMany(query).collation({ locale: 'en', strength: 2 });
-        return { success: true, deleted: result.deletedCount };
+        return reply.send({ success: true, deleted: result.deletedCount });
     } catch(e) {
         return reply.code(500).send({ error: e.message });
     }
@@ -598,7 +598,7 @@ async function adminResetIpRoute(request, reply) {
     const targetKey = String(request.body.targetKey || "").toLowerCase();
     await KeyModel.updateOne({ key: targetKey }, { ip: "MANUAL" })
         .collation({ locale: 'en', strength: 2 });
-    return { success: true };
+    return reply.send({ success: true });
 }
 
 /**
@@ -625,7 +625,7 @@ async function adminEditFullRoute(request, reply) {
     await KeyModel.updateOne({ key: targetKey.toLowerCase() }, update)
         .collation({ locale: 'en', strength: 2 });
 
-    return { success: true };
+    return reply.send({ success: true });
 }
 
 /**
@@ -637,7 +637,7 @@ async function adminRevokeKeyRoute(request, reply) {
     const targetKey = String(request.body.targetKey || "").toLowerCase();
     await KeyModel.deleteOne({ key: targetKey })
         .collation({ locale: 'en', strength: 2 });
-    return { success: true };
+    return reply.send({ success: true });
 }
 
 /**
@@ -670,12 +670,12 @@ async function adminCreateKeyRoute(request, reply) {
         });
     } catch (e) {
         if (e.code === 11000) {
-            return { success: true };
+            return reply.send({ success: true, info: "Key already exists" });
         }
         throw e;
     }
 
-    return { success: true };
+    return reply.send({ success: true });
 }
 
 /**
@@ -696,7 +696,7 @@ async function adminUnbanRoute(request, reply) {
     if (key) query.key = key.toLowerCase();
 
     const result = await BanModel.deleteOne(query);
-    return { success: true, deleted: result.deletedCount };
+    return reply.send({ success: true, deleted: result.deletedCount });
 }
 
 module.exports = {
