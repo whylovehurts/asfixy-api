@@ -58,7 +58,7 @@ function render(name, data = {}) {
     if (jsContent) {
         html = html.replace(
             `<script nonce="{{NONCE}}" src="/static/js/${name}.js">`,
-            `<script nonce="{{NONCECE}}">${jsContent}</script>`
+            `<script nonce="{{NONCECE}}">${jsContent}`
         );
     }
     

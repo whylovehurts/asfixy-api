@@ -140,7 +140,7 @@ fastify.addHook('onRequest', async (req, reply) => {
 const ALLOWED_ORIGINS = [
     'http://127.0.0.1:3000',
     'http://localhost:3000',
-    'https://asfixy.up.railway.app/',
+    'https://asfixy.up.railway.app',
     'https://orteil.dashnet.org' // Cookie Clicker origin for extension calls
 ];
 fastify.register(require('@fastify/cors'), {
