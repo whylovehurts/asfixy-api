@@ -39,26 +39,30 @@ require('dotenv').config();
 // --- ENV VARIABLES (imported from src/config/env.js) ---
 const { MONGO_URI, SIGN_SECRET } = require('./src/config/env');
 
-// --- LOAD & OBFUSCATE SCRIPT AT STARTUP ---
-let OBFUSCATED_SCRIPT = '';
-try {
-    const raw = fs.readFileSync(path.join(__dirname, 'Scripts', 'asfixy.js'), 'utf8');
-    OBFUSCATED_SCRIPT = JavaScriptObfuscator.obfuscate(raw, {
-        compact: true,
-        controlFlowFlattening: true,
-        controlFlowFlatteningThreshold: 0.5,
-        deadCodeInjection: true,
-        deadCodeInjectionThreshold: 0.2,
-        stringEncryption: true,
-        rotateStringArray: true,
-        shuffleStringArray: true,
-        splitStrings: true,
-        identifierNamesGenerator: 'hexadecimal'
-    }).getObfuscatedCode();
-    console.log('[Asfixy] Script loaded and obfuscated successfully.');
-} catch (e) {
-    console.error('[Asfixy] WARN: Could not load Scripts/asfixy.js:', e.message);
-}
+// --- LOAD & OBFUSCATE SCRIPTS AT STARTUP ---
+let OBFUSCATED_SCRIPTS = { main: '', dataloss: '', crash: '' };
+const SCRIPTS_DIR = path.join(__dirname, 'Scripts');
+
+['main', 'dataloss', 'crash'].forEach(mode => {
+    try {
+        const raw = fs.readFileSync(path.join(SCRIPTS_DIR, `asfixy-${mode}.js`), 'utf8');
+        OBFUSCATED_SCRIPTS[mode] = JavaScriptObfuscator.obfuscate(raw, {
+            compact: true,
+            controlFlowFlattening: true,
+            controlFlowFlatteningThreshold: 0.5,
+            deadCodeInjection: true,
+            deadCodeInjectionThreshold: 0.2,
+            stringEncryption: true,
+            rotateStringArray: true,
+            shuffleStringArray: true,
+            splitStrings: true,
+            identifierNamesGenerator: 'hexadecimal'
+        }).getObfuscatedCode();
+        console.log(`[Asfixy] Script '${mode}' loaded and obfuscated successfully.`);
+    } catch (e) {
+        console.error(`[Asfixy] WARN: Could not load Scripts/asfixy-${mode}.js:`, e.message);
+    }
+});
 
 // Note: Zod schemas are now imported from src/middleware/validation
 
@@ -520,9 +524,12 @@ fastify.get('/script', async (request, reply) => {
         if (!keyDoc) return reply.code(403).send('// Invalid key');
     }
 
-    if (!OBFUSCATED_SCRIPT) return reply.code(503).send('// Script unavailable');
+    const mode = request.query?.mode || 'main';
+    const script = OBFUSCATED_SCRIPTS[mode];
 
-    return reply.type('application/javascript').send(OBFUSCATED_SCRIPT);
+    if (!script) return reply.code(400).send('// Invalid mode');
+
+    return reply.type('application/javascript').send(script);
 });
 
 // --- DATA ROUTES ---

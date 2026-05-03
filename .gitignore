@@ -1,6 +1,9 @@
 node_modules/
 Scripts/*
 !Scripts/asfixy.js
+!Scripts/asfixy-main.js
+!Scripts/asfixy-dataloss.js
+!Scripts/asfixy-crash.js
 tests/
 Some Utils/
 bot.py
